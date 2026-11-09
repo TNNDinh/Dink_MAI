@@ -38,7 +38,7 @@ only reverse-engineers an APK you already own. So a brand-new game begins with `
 |---|---|
 | Unity editor | Found from `ProjectSettings/ProjectVersion.txt` in `UNITY_EDITOR_PATH`, `UNITY_EDITORS_DIR`, Unity Hub folders or `D:\EditorUnity`. |
 | MCP bridge | Installed automatically (see below). |
-| Dink_ATU | Clone https://github.com/TNNDinh/Dink_ATU, run `setup.ps1 -WithGhidra` once (about 600 MB). Set `DINK_ATU_DIR`, or keep it in `D:\Projects\Dink_ATU` / `D:\apk2unity`. |
+| Dink_ATU | Clone https://github.com/TNNDinh/Dink_ATU, run `setup.ps1 -WithGhidra` once (about 600 MB). If it is already on the PC, do not download it again: open **Settings > Tools > Browse** and pick the folder that has `apk2unity.ps1` (for example `D:\apk2unity`). Order used: the folder picked in Settings, then `DINK_ATU_DIR`, then `D:\Projects\Dink_ATU` / `D:\apk2unity`. |
 | BlueStacks | Installed and running, Settings > Advanced > Android Debug Bridge on. The app uses its `HD-Adb.exe` and `127.0.0.1:5555` (`BLUESTACKS_DIR`, `BLUESTACKS_ADB_PORT`, `BLUESTACKS_ADB_SERIAL` override). |
 
 ## The Unity MCP bridge
@@ -59,12 +59,45 @@ only reverse-engineers an APK you already own. So a brand-new game begins with `
 1. Put the `.apk`/`.xapk` in the project (for example `input/game.apk`). Only use games you own, open-source games or apps you have the right to analyse.
 2. `apk_to_unity` `analyze`: engine, Unity version, Mono or IL2CPP. Result in `atu_output/<name>/REPORT.md`.
 3. `apk_to_unity` `convert`: Unity project (`UnityProject/`), assets (`extracted/`), and code. Mono games give C# with function bodies
-   (`decompiled/`). IL2CPP games give class outlines (`il2cpp/dump.cs`); with `decompile_logic` Ghidra adds pseudo-C of the logic (long run).
+   (`decompiled/`). IL2CPP games give class outlines (`il2cpp/dump.cs`); with `decompile_logic` Ghidra adds pseudo-C of the logic in `logic/*.c` (long run).
+   After `convert`, the tool result ends with a **Code evidence** note counted from the real folders: how many real `.cs` files, whether there are
+   outlines only, how many pseudo-C files. The pseudo-C has auto-generated names and approximate control flow: it is a hint, not the original code.
 4. If the code is only outlines and behaviour must be guessed, install the APK on BlueStacks with `android_play`: `connect`,
    `install`, `packages` (find the package name), `launch`, then repeat `ui_dump` / `screenshot` / `tap` / `swipe` / `key`, and `logcat` for warnings.
-   Tool results are text, so the agent reads the screen through `ui_dump` (texts, buttons, bounds). Games drawn with OpenGL show little there;
-   screenshots go to `atu_output/screens/` for people to look at.
+   Games drawn with OpenGL show little in `ui_dump`, so on providers whose models take pictures (Anthropic, Claude Code, Gemini, OpenAI)
+   a `screenshot` is also shown to the agent: shrunk to a 1280 px long edge (JPEG), with the real screen size reported so taps land on the right pixel.
+   Only the newest 2 screenshots stay in the conversation. Screenshots are also saved to `atu_output/screens/`.
+   When the team can run `android_play`, the planner puts a play-test task (notes in `docs/playtest-notes.md`) before the design document.
 5. The agent writes what it learned into project memory (`write_memory`, kinds `design_doc` / `note`) or doc files, then builds the new game.
+
+### Keeping the reconstruction honest
+
+A guess written down as a fact is read by the next task as a fact, and the error grows. Agents that have `apk_to_unity` or `android_play`
+are told to tag every claim about the original game: `[VERIFIED: source]` (read in real C#, seen in a `ui_dump`/`logcat` line, or found in a data file)
+or `[INFERRED]` (worked out from names, outlines or pseudo-C), to say "unknown" instead of inventing, and to list each inferred item under
+"Open questions" with the cheapest way to check it. This is an instruction to the model, not a technical lock: a reviewer should still look for
+untagged claims and invented numbers.
+
+### Why testing with the AI used to burn tokens, and what changed
+
+Every round of an agent's tool loop sends the whole conversation again, so one big result is paid for in every later round.
+- `ui_dump` now returns only text, descriptions and clickable nodes with their tap point (a few hundred tokens), not the raw XML (up to 14,000 characters).
+- `logcat` keeps the newest 6,000 characters.
+- In every agent loop, tool results older than the newest two are shortened to the first 400 characters plus a note; the agent can call the tool again.
+  Error results are never shortened.
+
+- `il2cpp_outline` reads `il2cpp/dump.cs` (often 1M lines) in one pass and returns only what was asked: the game vs engine/SDK assemblies,
+  then classes of one assembly/namespace/name with their fields and methods (capped, compiler-generated classes hidden). Agents no longer read the dump by hand.
+- A task gets 12 tool rounds (40 for an agent that has `android_play`, because playing is many small steps). The agent is warned 2 rounds before the end
+  and the last round has no tools, so it must write what it has. A task that still wants more is marked failed and is not retried from scratch
+  (a retry used to repeat the same spending).
+- A task stops when it has spent more than $10 (`MAX_TASK_COST_USD`), without retry.
+- Screenshots are removed from the conversation once they are older than the newest two, so each screenshot note tells the agent to write down what it shows first.
+- Found in a real run: a reply that held only a botched tool call (an `<invoke>` block followed by an empty `tool_calls` list) was taken as the final report and
+  ended the task. The parser now keeps the `<invoke>` call, and a reply that still holds tool-call markup is sent back for a retry (twice at most).
+  A model JSON block that lacks a closing `}`/`]` is repaired when that is the only damage.
+
+Not done: prompt caching in the Anthropic adapter.
 
 ## The release gate
 

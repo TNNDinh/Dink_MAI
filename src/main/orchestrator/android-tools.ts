@@ -2,6 +2,8 @@ import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { MAX_TIMEOUT_MS } from '../workspace/commands'
 import type { AgentTool, ToolContext } from './tools'
+import { describeShot, prepareScreenshot } from './screenshot'
+import { compactUiDump } from './ui-dump'
 
 /**
  * Plays an Android game on the BlueStacks emulator through adb, so an agent can learn how a game behaves when its code
@@ -15,6 +17,7 @@ const PACKAGE = /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+$/
 const SHOT_DIR = 'atu_output/screens'
 const DEFAULT_TIMEOUT_MS = 120_000
 const OUTPUT_CHARS = 14_000
+const LOGCAT_CHARS = 6_000
 
 /** BlueStacks' own adb (HD-Adb.exe), ANDROID_ADB / `adb` as fallbacks. */
 export function findAdb(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = existsSync): string {
@@ -155,6 +158,11 @@ const androidPlay: AgentTool = {
     })
     const project = ctx.workspace.project(ctx.projectId)
     const task = ctx.db.get<{ title: string }>(`SELECT title FROM tasks WHERE id = ?`, ctx.taskId)
+    const what = describeAction(action, args)
+    const note = (level: 'info' | 'warn', message: string, data?: Record<string, unknown>): void => {
+      ctx.events.record({ projectId: ctx.projectId, runId: ctx.runId, agentId: ctx.agent.id, level, type: 'android.action', message: `${ctx.agent.name}: ${message}`, data: { action, ...data } })
+    }
+    if (action === 'install') note('info', `${what} (can take a while)`)
     const r = await ctx.commands.run({
       projectId: ctx.projectId,
       projectName: project.name,
@@ -169,10 +177,59 @@ const androidPlay: AgentTool = {
       timeoutMs: action === 'install' ? MAX_TIMEOUT_MS : DEFAULT_TIMEOUT_MS,
       signal: ctx.signal
     })
-    const out = r.output.length > OUTPUT_CHARS ? `${r.output.slice(0, OUTPUT_CHARS)}\n[… clipped …]` : r.output
+    // A screen dump is mostly layout noise: keep only what can be read or pressed. A log is clipped from the front (the newest lines matter).
+    const ui = action === 'ui_dump' && r.exitCode === 0 ? compactUiDump(r.output) : null
+    const limit = action === 'logcat' ? LOGCAT_CHARS : OUTPUT_CHARS
+    const out = ui ? ui.text : r.output.length <= limit ? r.output : action === 'logcat' ? `[… older lines clipped …]\n${r.output.slice(-limit)}` : `${r.output.slice(0, limit)}\n[… clipped …]`
     const head = r.outcome === 'exited' ? (r.exitCode === 0 ? 'OK.' : `adb exit code ${r.exitCode}.`) : r.outcome === 'timeout' ? 'adb timed out.' : `${r.outcome}${r.message ? `: ${r.message}` : ''}`
     const hint = r.exitCode !== 0 && /no devices|offline|cannot connect|refused/i.test(r.output) ? '\nIs BlueStacks running with ADB enabled? Call action "connect" first.' : ''
-    return `${head}${shot && r.exitCode === 0 ? ` Saved ${shot}.` : ''}\n${action === 'screenshot' ? '' : out || '(no output)'}${hint}`
+    // Shown live in the Activity panel so the user can follow what the agent does on the emulator.
+    const seen = ui ? ` (${ui.shown} readable elements)` : ''
+    note(r.exitCode === 0 ? 'info' : 'warn', `${what} → ${head.replace(/\.$/, '')}${seen}${shot && r.exitCode === 0 ? ` · ${shot}` : ''}`, { ...(shot ? { screenshot: shot } : {}), ok: r.exitCode === 0 })
+    // A model that can see pictures gets the screenshot itself: games drawn with OpenGL have an almost empty ui_dump.
+    let seen2 = ''
+    if (shot && file && r.exitCode === 0 && ctx.canSeeImages && ctx.attachImage) {
+      try {
+        const prepared = await prepareScreenshot(file)
+        if (prepared) {
+          ctx.attachImage(prepared.image)
+          seen2 = ` ${describeShot(prepared)}`
+        } else seen2 = ' (The file is not a usable PNG, so it could not be shown to you.)'
+      } catch (e) {
+        seen2 = ` (The screenshot could not be shown to you: ${e instanceof Error ? e.message : String(e)})`
+      }
+    }
+    return `${head}${shot && r.exitCode === 0 ? ` Saved ${shot}.` : ''}${seen2}\n${action === 'screenshot' ? '' : out || '(no output)'}${hint}`
+  }
+}
+
+/** A short human sentence for one emulator action, for the Activity panel. */
+export function describeAction(action: AndroidAction, args: Record<string, unknown>): string {
+  const n = (v: unknown): string => (typeof v === 'number' && Number.isFinite(v) ? String(Math.round(v)) : '?')
+  switch (action) {
+    case 'tap':
+      return `tap (${n(args.x)},${n(args.y)})`
+    case 'swipe':
+      return `swipe (${n(args.x)},${n(args.y)}) → (${n(args.x2)},${n(args.y2)})`
+    case 'key':
+      return `press key ${typeof args.key === 'string' ? args.key : '?'}`
+    case 'text':
+      return `type ${typeof args.text === 'string' ? `"${args.text.slice(0, 40)}"` : 'text'}`
+    case 'launch':
+    case 'stop':
+      return `${action} ${typeof args.package === 'string' ? args.package : 'the game'}`
+    case 'install':
+      return `install ${typeof args.apk === 'string' ? args.apk : 'APK'}`
+    case 'ui_dump':
+      return 'read the screen'
+    case 'screenshot':
+      return 'take a screenshot'
+    case 'logcat':
+      return 'read the device log'
+    case 'packages':
+      return 'list installed packages'
+    default:
+      return 'connect to BlueStacks'
   }
 }
 

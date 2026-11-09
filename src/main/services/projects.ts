@@ -26,6 +26,7 @@ interface ProjectRow {
   budget_usd: number | null
   max_iterations: number
   auto_recovery: number
+  bypass_approvals: number
   created_at: number
   updated_at: number
 }
@@ -41,6 +42,7 @@ const toProject = (r: ProjectRow): Project => ({
   budgetUsd: r.budget_usd,
   maxIterations: r.max_iterations,
   autoRecovery: r.auto_recovery === 1,
+  bypassApprovals: r.bypass_approvals === 1,
   createdAt: r.created_at,
   updatedAt: r.updated_at
 })
@@ -170,9 +172,11 @@ export class ProjectService {
     const maxIterations = input.maxIterations !== undefined ? validateIterations(input.maxIterations) : current.maxIterations
     if (input.autoRecovery !== undefined && typeof input.autoRecovery !== 'boolean') throw new Error('Auto Recovery must be on or off.')
     const autoRecovery = input.autoRecovery ?? current.autoRecovery
+    if (input.bypassApprovals !== undefined && typeof input.bypassApprovals !== 'boolean') throw new Error('Bypass approvals must be on or off.')
+    const bypassApprovals = input.bypassApprovals ?? current.bypassApprovals
 
     this.db.run(
-      `UPDATE projects SET name=?, type=?, goal=?, status=?, budget_usd=?, max_iterations=?, auto_recovery=?, updated_at=? WHERE id=?`,
+      `UPDATE projects SET name=?, type=?, goal=?, status=?, budget_usd=?, max_iterations=?, auto_recovery=?, bypass_approvals=?, updated_at=? WHERE id=?`,
       name,
       type,
       (input.goal ?? current.goal).trim(),
@@ -180,6 +184,7 @@ export class ProjectService {
       budgetUsd,
       maxIterations,
       autoRecovery ? 1 : 0,
+      bypassApprovals ? 1 : 0,
       Date.now(),
       input.id
     )
@@ -188,6 +193,16 @@ export class ProjectService {
     }
     if (autoRecovery !== current.autoRecovery) {
       this.events.record({ projectId: input.id, type: 'project.auto_recovery', message: `Auto Recovery ${autoRecovery ? 'turned on' : 'turned off'} for "${name}"` })
+    }
+    if (bypassApprovals !== current.bypassApprovals) {
+      this.events.record({
+        projectId: input.id,
+        level: bypassApprovals ? 'warn' : 'info',
+        type: 'project.bypass_approvals',
+        message: bypassApprovals
+          ? `Bypass approvals turned ON for "${name}": agents' commands run without asking (blocked commands are still refused)`
+          : `Bypass approvals turned off for "${name}"`
+      })
     }
     return this.get(input.id)!
   }

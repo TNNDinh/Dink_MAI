@@ -116,11 +116,14 @@ export interface TeamMember {
 }
 
 /** The instruction given to the Project Manager on top of its own system prompt. */
-export function plannerInstructions(opts: { projectName: string; projectType: string; goal: string; team: TeamMember[]; existing: string[] }): string {
+export function plannerInstructions(opts: { projectName: string; projectType: string; goal: string; team: TeamMember[]; existing: string[]; canPlay?: boolean }): string {
   const team = opts.team.map((m) => `- role "${m.role}" (${m.roleLabel}, agent "${m.name}"): ${m.description}`).join('\n')
   const existing = opts.existing.length ? `\nTasks that already exist on the board (do not duplicate them; you may depend on none of them, they run too):\n${opts.existing.map((t) => `- ${t}`).join('\n')}\n` : ''
   const imageRule = opts.team.some((m) => m.role === 'image_generator')
     ? '\n- A task for the image_generator role is sent to the image model word for word as its prompt (title, then description) and produces exactly one picture. Write its description as the finished prompt: subject, art style, palette, view, background (say "transparent background" when needed) and size such as 1024x1024. Plan one task per picture; do not put instructions to a person in it.'
+    : ''
+  const playRule = opts.canPlay
+    ? '\n- The team can play Android games in an emulator (android_play). When the goal is to document or rebuild an existing game whose behaviour cannot be read from real C# source (an IL2CPP game gives only class names), plan a play-test task for a role that can run commands BEFORE the task that writes the design document, and make the design task depend on it. The play-test task installs and launches the game, plays the main loop and the first minutes of progression, and writes what it SAW (screens, controls, rules, numbers on screen) to docs/playtest-notes.md. The design document then uses those notes as its VERIFIED source. If the game was never played, the document must say so at the top.'
     : ''
   return `Plan the work for this project and submit it with the submit_plan tool.
 
@@ -135,6 +138,6 @@ Guidelines:
 - Order the work like a real team: design and architecture first; art/asset work in parallel with implementation when the roles exist; then integration; then a code review task; then a QA/testing task; a final task that summarises the result. Skip stages for which the team has no role.
 - Use depends_on so a task starts only when what it needs exists. Tasks without dependencies start immediately and may run in parallel.
 - A reviewer or QA task must depend on the implementation it checks. They can send work back for changes, so do not plan separate "fix" tasks.
-- Do not assign work to roles that are not in the team list.${imageRule}
+- Do not assign work to roles that are not in the team list.${imageRule}${playRule}
 Call submit_plan once.`
 }

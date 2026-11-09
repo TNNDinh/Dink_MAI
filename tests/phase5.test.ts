@@ -556,7 +556,40 @@ describe('failure handling', () => {
     const run = await runToEnd()
     expect(run.status).toBe('failed')
     expect(taskByTitle('Design').error).toMatch(/did not finish within 12 tool rounds/)
-    expect(gw.forTask('Design')).toHaveLength(24) // 12 rounds x 2 attempts
+    // Running out of rounds is not retried: the same task from scratch would hit the same wall and spend the same again.
+    expect(gw.forTask('Design')).toHaveLength(12)
+    expect(taskByTitle('Design').attempts).toBe(1)
+  })
+
+  it('warns the agent when rounds run low and takes the tools away on the last round, so it hands in a report', async () => {
+    team(['project_manager', 'technical_architect'])
+    const asked: string[] = [] // the conversation as it was when each call was made (the array is edited afterwards)
+    script([{ key: 'a', title: 'Design', description: 'd', role: 'technical_architect' }], (s) => {
+      if (s.taskTitle !== 'Design') return undefined
+      asked.push(JSON.stringify(s.req.messages))
+      return s.req.tools ? { tools: [{ name: 'list_tasks', args: {} }] } : { text: 'Found X, did not get to Y.' }
+    })
+    expect((await runToEnd()).status).toBe('completed')
+    const calls = gw.forTask('Design')
+    expect(calls).toHaveLength(12)
+    expect(calls[11].req.tools).toBeUndefined()
+    expect(calls.slice(0, 11).every((c) => c.req.tools)).toBe(true)
+    expect(asked[9]).not.toMatch(/tool rounds left/)
+    expect(asked[10]).toMatch(/2 tool rounds left/)
+    expect(asked[11]).toMatch(/second-to-last round/)
+    const r = taskByTitle('Design').resultSummary ?? ''
+    expect(r).toMatch(/Found X, did not get to Y/)
+    expect(r).toMatch(/Incomplete: the agent used its 12 tool rounds/)
+  })
+
+  it('stops a task that has spent more than the per-task limit, without retrying it', async () => {
+    team(['project_manager', 'technical_architect'])
+    script([{ key: 'a', title: 'Design', description: 'd', role: 'technical_architect' }], (s) => (s.taskTitle === 'Design' ? { tools: [{ name: 'list_tasks', args: {} }], cost: 11 } : undefined))
+    const run = await runToEnd()
+    expect(run.status).toBe('failed')
+    expect(taskByTitle('Design').error).toMatch(/limit for one task/)
+    expect(taskByTitle('Design').attempts).toBe(1)
+    expect(gw.forTask('Design')).toHaveLength(1)
   })
 })
 

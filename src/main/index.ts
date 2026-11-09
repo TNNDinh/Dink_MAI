@@ -10,6 +10,7 @@ import { AutomationService } from './automation/service'
 import { AutoRecovery } from './git/recovery'
 import { GitService } from './git/service'
 import { PreviewService } from './preview/service'
+import { ToolPaths } from './services/tool-paths'
 import { createHandlers } from './ipc/handlers'
 import { registerIpc, type IpcMainLike } from './ipc/register'
 import { EncryptedFileSecretStore, type Cipher } from './secrets/secret-store'
@@ -83,6 +84,7 @@ async function bootstrap(): Promise<void> {
   const git = new GitService(db, events, workspace)
   const automation = new AutomationService(events, workspace, commands)
   const preview = new PreviewService(events, workspace)
+  const toolPaths = new ToolPaths(db)
   const assets = new AssetService({ db, events, workspace, connections })
   // JPEG, WebP, GIF and interlaced PNG are decoded by Electron; PNG uses the built-in decoder.
   setForeignDecoder((data) => {
@@ -117,9 +119,9 @@ async function bootstrap(): Promise<void> {
     emitChat(event: ChatStreamEvent): void {
       for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(CHAT_CHANNEL, event)
     },
-    async pickFolder(): Promise<string | null> {
+    async pickFolder(title = 'Choose project folder'): Promise<string | null> {
       const win = mainWindow()
-      const opts = { title: 'Choose project folder', properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
+      const opts = { title, properties: ['openDirectory', 'createDirectory'] as Array<'openDirectory' | 'createDirectory'> }
       const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
       return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
     },
@@ -134,7 +136,7 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  registerIpc(ipcMain as unknown as IpcMainLike, createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, host }), {
+  registerIpc(ipcMain as unknown as IpcMainLike, createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, host }), {
     isTrustedSender: isTrustedUrl,
     onError: (channel, error) =>
       events.record({ level: 'error', type: 'ipc.error', message: `${channel}: ${error instanceof Error ? error.message : String(error)}` })

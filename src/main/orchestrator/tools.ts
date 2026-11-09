@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import type { Agent } from '../../shared/ipc'
 import type { Database } from '../db/database'
 import type { AssetService } from '../assets/service'
-import type { ToolDefinition } from '../providers/types'
+import type { ImagePart, ToolDefinition } from '../providers/types'
 import type { EventService } from '../services/events'
 import type { TaskService } from '../services/tasks'
 import type { CommandService } from '../workspace/commands'
@@ -42,6 +42,10 @@ export interface ToolContext {
   imageTarget?: { connectionId: string; model: string; agentName: string } | null
   /** Aborted when the run is stopped; long-running tools must honour it. */
   signal?: AbortSignal
+  /** True when the agent's model can look at pictures (a screenshot is then worth attaching). */
+  canSeeImages?: boolean
+  /** Shows a picture to the model together with this tool's result. Only set for the duration of one tool call. */
+  attachImage?: (image: ImagePart) => void
 }
 
 export interface AgentTool {

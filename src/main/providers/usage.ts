@@ -9,6 +9,7 @@ import type { ModelPricing, TokenUsage } from './types'
  * `model_pricing` table. Local models (Ollama) are passed `{0, 0}` by the caller.
  */
 export function estimateCostUsd(usage: TokenUsage, pricing: ModelPricing | undefined | null): number | null {
+  if (typeof usage.costUsd === 'number') return usage.costUsd // reported by the provider itself
   if (!pricing) return null
   return (usage.inputTokens * pricing.inputPerMTok + usage.outputTokens * pricing.outputPerMTok) / 1_000_000
 }
@@ -17,6 +18,7 @@ export function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   return {
     inputTokens: a.inputTokens + b.inputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
-    cachedInputTokens: (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0) || undefined
+    cachedInputTokens: (a.cachedInputTokens ?? 0) + (b.cachedInputTokens ?? 0) || undefined,
+    ...(a.costUsd !== undefined || b.costUsd !== undefined ? { costUsd: (a.costUsd ?? 0) + (b.costUsd ?? 0) } : {})
   }
 }

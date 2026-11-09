@@ -746,4 +746,13 @@ describe('orchestrator and pictures', () => {
     const without = plannerInstructions({ ...base, team: [{ role: 'lead_developer', roleLabel: 'Dev', name: 'D', description: 'd' }] })
     expect(without).not.toMatch(/image model/)
   })
+
+  it('asks for a play-test before the design document only when the team can play the game', () => {
+    const base = { projectName: 'P', projectType: 'unity', goal: 'g', existing: [] as string[], team: [{ role: 'lead_developer', roleLabel: 'Dev', name: 'D', description: 'd' }] }
+    const can = plannerInstructions({ ...base, canPlay: true })
+    expect(can).toMatch(/plan a play-test task .* BEFORE the task that writes the design document/)
+    expect(can).toMatch(/docs\/playtest-notes\.md/)
+    expect(plannerInstructions({ ...base, canPlay: false })).not.toMatch(/play-test/)
+    expect(plannerInstructions(base)).not.toMatch(/play-test/)
+  })
 })

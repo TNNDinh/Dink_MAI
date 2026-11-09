@@ -13,6 +13,8 @@ export function ApprovalDialog() {
   const setMinimized = useStudio((s) => s.setApprovalsMinimized)
   const [now, setNow] = useState(Date.now())
   const [busy, setBusy] = useState(false)
+  const [armed, setArmed] = useState(false)
+  const refresh = useStudio((s) => s.refresh)
   const current = approvals[0]
 
   useEffect(() => {
@@ -29,6 +31,18 @@ export function ApprovalDialog() {
       await window.api.invoke('approvals:respond', { id: current.id, allow })
     } finally {
       setBusy(false)
+    }
+  }
+  // Two clicks: the first arms the button, the second turns Bypass approvals on for the whole project and runs what is waiting.
+  const bypassProject = async (): Promise<void> => {
+    if (!armed) return setArmed(true)
+    setBusy(true)
+    try {
+      await window.api.invoke('projects:update', { id: current.projectId, bypassApprovals: true })
+      await refresh()
+    } finally {
+      setBusy(false)
+      setArmed(false)
     }
   }
   const left = Math.max(0, Math.ceil((current.expiresAt - now) / 1000))
@@ -92,7 +106,12 @@ export function ApprovalDialog() {
         </div>
         <div className="flex items-center gap-2 border-t border-line px-5 py-3">
           <span className={cx('text-[11px]', left <= 30 ? 'text-warn' : 'text-faint')}>{isStep ? 'Rejected' : 'Denied'} automatically in {leftText}</span>
-          <Button variant="ghost" size="sm" className="ml-auto" onClick={() => setMinimized(true)}>
+          {!isStep && (
+            <Button variant="ghost" size="sm" className={cx('ml-auto', armed && 'text-err')} disabled={busy} onClick={() => void bypassProject()} onBlur={() => setArmed(false)} data-approval="bypass" title="Stop asking for this project. Blocked commands are still refused.">
+              {armed ? 'Click again: run everything in this project' : 'Bypass for this project'}
+            </Button>
+          )}
+          <Button variant="ghost" size="sm" className={isStep ? 'ml-auto' : undefined} onClick={() => setMinimized(true)}>
             Decide later
           </Button>
           <Button autoFocus disabled={busy} onClick={() => void respond(false)} data-approval="deny">

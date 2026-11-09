@@ -12,6 +12,7 @@ import type { Orchestrator } from '../orchestrator/orchestrator'
 import type { ProjectService } from '../services/projects'
 import type { TaskService } from '../services/tasks'
 import { describePolicy } from '../security/command-policy'
+import type { ToolPaths } from '../services/tool-paths'
 import type { CommandService } from '../workspace/commands'
 import type { WorkspaceService } from '../workspace/workspace'
 import type { WorkflowEngine } from '../workflows/engine'
@@ -21,7 +22,7 @@ import { randomUUID } from 'node:crypto'
 /** Things only the Electron host can do; injected so handlers stay testable. */
 export interface HostBridge {
   appInfo(): AppInfo
-  pickFolder(): Promise<string | null>
+  pickFolder(title?: string): Promise<string | null>
   revealInFolder(path: string): void
   /** Push a streamed chat event to the UI. */
   emitChat(event: ChatStreamEvent): void
@@ -44,6 +45,7 @@ export interface HandlerDeps {
   git: GitService
   automation: AutomationService
   preview: PreviewService
+  toolPaths: ToolPaths
   host: HostBridge
 }
 
@@ -51,7 +53,7 @@ export type Handlers = {
   [K in IpcChannel]: (...args: Parameters<IpcContract[K]>) => ReturnType<IpcContract[K]> | Promise<ReturnType<IpcContract[K]>>
 }
 
-export function createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, host }: HandlerDeps): Handlers {
+export function createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, host }: HandlerDeps): Handlers {
   return {
     'automation:detect': (projectId) => automation.detect(String(projectId)),
     'automation:run': (input) => automation.start(String(input?.projectId), input?.kind),
@@ -184,9 +186,23 @@ export function createHandlers({ projects, dashboard, events, connections, chat,
     'projects:list': () => projects.list(),
     'projects:get': (id) => projects.get(String(id)),
     'projects:create': (input) => projects.create(input),
-    'projects:update': (input) => projects.update(input),
+    'projects:update': (input) => {
+      const before = projects.get(String(input.id))
+      const updated = projects.update(input)
+      // Turning bypass on also releases what is already waiting for this project (command approvals only, never a Human-approval step).
+      if (updated.bypassApprovals && before && !before.bypassApprovals) {
+        for (const a of commands.approvals.list()) if (a.projectId === updated.id && a.kind !== 'workflow') commands.approvals.respond(a.id, true)
+      }
+      return updated
+    },
     'projects:remove': (id) => projects.remove(String(id)),
     'projects:pickFolder': () => host.pickFolder(),
+    'tools:atuStatus': () => toolPaths.atuStatus(),
+    'tools:atuBrowse': async () => {
+      const picked = await host.pickFolder('Choose the Dink_ATU folder (the one that contains apk2unity.ps1)')
+      return picked ? toolPaths.setAtu(picked) : null
+    },
+    'tools:atuClear': () => toolPaths.setAtu(null),
     'projects:inspectFolder': (path) => projects.inspectFolder(String(path)),
     'projects:reveal': (id) => {
       const p = projects.get(String(id))

@@ -91,6 +91,8 @@ export interface TokenUsage {
   outputTokens: number
   /** Tokens served from a prompt cache, when the provider reports it. */
   cachedInputTokens?: number
+  /** Cost in USD when the provider itself reports it (the Claude Code CLI does). It wins over the price table. */
+  costUsd?: number
 }
 
 export type StopReason = 'end' | 'tool_use' | 'max_tokens' | 'other'

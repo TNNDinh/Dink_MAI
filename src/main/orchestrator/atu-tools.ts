@@ -1,8 +1,11 @@
-import { createReadStream, existsSync, statSync } from 'node:fs'
+import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { MAX_TIMEOUT_MS } from '../workspace/commands'
 import { isSecretPath } from '../workspace/sandbox'
+import { readConfiguredAtuDir, resolveAtuDir } from '../services/tool-paths'
+import { describeCodeEvidence } from './evidence'
+import { IL2CPP_TOOLS } from './il2cpp-outline'
 import type { AgentTool, ToolContext } from './tools'
 
 /**
@@ -16,11 +19,9 @@ type AtuAction = (typeof ACTIONS)[number]
 const SAFE_NAME = /^[A-Za-z0-9_-]{1,60}$/
 const OUT_DIR = 'atu_output'
 
-/** Where Dink_ATU lives: DINK_ATU_DIR, or the usual clone folder. */
-export function findAtuDir(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = existsSync): string | null {
-  // An explicit DINK_ATU_DIR is the only place looked at; without it the usual clone folders are tried.
-  const dirs = env.DINK_ATU_DIR ? [env.DINK_ATU_DIR] : ['D:\\Projects\\Dink_ATU', 'D:\\apk2unity']
-  return dirs.find((d) => exists(join(d, 'apk2unity.ps1'))) ?? null
+/** Where Dink_ATU lives: the folder picked in Settings, DINK_ATU_DIR, or the usual clone folder. */
+export function findAtuDir(env: NodeJS.ProcessEnv = process.env, exists: (p: string) => boolean = existsSync, configured: string | null = null): string | null {
+  return resolveAtuDir(configured, env, exists)?.dir ?? null
 }
 
 export interface AtuRequest {
@@ -57,7 +58,7 @@ const apkToUnity: AgentTool = {
   def: {
     name: 'apk_to_unity',
     description:
-      'Use the Dink_ATU tool to study a game package: "analyze" only detects the engine, Unity version and Mono/IL2CPP backend (fast, writes a report); "convert" also rebuilds a Unity project and decompiled code (slow, many minutes; IL2CPP games give class outlines, and pseudo-C logic with decompile_logic). Input is an .apk/.xapk file or a PC game folder inside the project. Results go to atu_output/<name>/ (REPORT.md, UnityProject/, decompiled/ or il2cpp/). If the result only has class outlines (IL2CPP without logic) and the behaviour has to be guessed, install the APK on BlueStacks and observe the real game with android_play, then write the documentation from what you saw. ONLY use it on games the user owns, open-source games, or apps the user has the right to analyse. The command goes through the normal approval policy.',
+      'Use the Dink_ATU tool to study a game package: "analyze" only detects the engine, Unity version and Mono/IL2CPP backend (fast, writes a report); "convert" also rebuilds a Unity project and decompiled code (slow, many minutes; IL2CPP games give class outlines, and pseudo-C logic with decompile_logic). Input is an .apk/.xapk file or a PC game folder inside the project. Results go to atu_output/<name>/ (REPORT.md, UnityProject/, decompiled/ or il2cpp/). After "convert" the result ends with a "Code evidence" note saying whether you have real C#, class outlines or machine pseudo-C: obey it. Real source can be read for behaviour; outlines and pseudo-C cannot be trusted as facts. If the behaviour would have to be guessed, observe the real game with android_play (BlueStacks) and write down only what you saw, marking the rest [INFERRED]. ONLY use it on games the user owns, open-source games, or apps the user has the right to analyse. The command goes through the normal approval policy.',
     parameters: {
       type: 'object',
       properties: {
@@ -77,8 +78,8 @@ const apkToUnity: AgentTool = {
     const action = args.action as AtuAction
     if (!ACTIONS.includes(action)) throw new Error(`action must be one of: ${ACTIONS.join(', ')}.`)
     if (typeof args.input !== 'string' || !args.input.trim()) throw new Error('input is required.')
-    const atuDir = findAtuDir()
-    if (!atuDir) throw new Error('Dink_ATU is not installed. Clone https://github.com/TNNDinh/Dink_ATU, run setup.ps1 -WithGhidra once, and set DINK_ATU_DIR to its folder.')
+    const atuDir = findAtuDir(process.env, existsSync, readConfiguredAtuDir(ctx.db))
+    if (!atuDir) throw new Error('Dink_ATU is not installed or the app cannot find it. If it is already on this PC, tell the user to open Settings > Tools and press "Browse" to pick its folder (the one with apk2unity.ps1). Otherwise clone https://github.com/TNNDinh/Dink_ATU and run setup.ps1 -WithGhidra once.')
     if (!existsSync(join(atuDir, 'tools'))) throw new Error(`Dink_ATU has no tools yet. Run "${join(atuDir, 'setup.ps1')} -WithGhidra" once (downloads about 600 MB).`)
     const sandbox = ctx.workspace.sandbox(ctx.projectId)
     const input = sandbox.resolve(args.input.trim())
@@ -111,7 +112,26 @@ const apkToUnity: AgentTool = {
     })
     const out = r.output.length > OUTPUT_CHARS ? `${r.output.slice(0, OUTPUT_CHARS / 4)}\n[… clipped …]\n${r.output.slice(-OUTPUT_CHARS * 3 / 4)}` : r.output
     const head = r.outcome === 'exited' ? `Dink_ATU exit code ${r.exitCode} after ${Math.round(r.durationMs / 1000)}s.` : r.outcome === 'timeout' ? `Dink_ATU timed out after ${timeoutMs / 1000}s and was killed (a partial result may be in ${OUT_DIR}/).` : `${r.outcome}${r.message ? `: ${r.message}` : ''}`
-    return `${head}\n${out || '(no output)'}`
+    return `${head}\n${out || '(no output)'}${action === 'convert' && r.outcome === 'exited' ? `\n\n${codeEvidenceNote(sandbox.resolve(OUT_DIR).full, typeof args.name === 'string' ? args.name : '')}` : ''}`
+  }
+}
+
+/** Tells the agent how much of the original code the output really holds, so it does not fill the gap with guesses. */
+function codeEvidenceNote(outRoot: string, name: string): string {
+  try {
+    let dir = name && SAFE_NAME.test(name) ? join(outRoot, name) : ''
+    if (!dir || !existsSync(dir)) {
+      // No name given: Dink_ATU picked one. Take the newest output folder.
+      const newest = readdirSync(outRoot, { withFileTypes: true })
+        .filter((e) => e.isDirectory() && e.name !== 'screens')
+        .map((e) => ({ p: join(outRoot, e.name), t: statSync(join(outRoot, e.name)).mtimeMs }))
+        .sort((a, b) => b.t - a.t)[0]
+      if (!newest) return ''
+      dir = newest.p
+    }
+    return describeCodeEvidence(dir).summary
+  } catch {
+    return ''
   }
 }
 
@@ -173,4 +193,4 @@ const searchBig: AgentTool = {
   }
 }
 
-export const ATU_TOOLS: AgentTool[] = [apkToUnity, searchBig]
+export const ATU_TOOLS: AgentTool[] = [apkToUnity, searchBig, ...IL2CPP_TOOLS]

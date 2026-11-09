@@ -369,5 +369,13 @@ export const MIGRATIONS: Migration[] = [
     -- Auto Recovery (opt-in per project): how many times a failed task may be rolled back and tried again.
     ALTER TABLE projects ADD COLUMN auto_recovery INTEGER NOT NULL DEFAULT 0;
     `
+  },
+  {
+    version: 7,
+    name: 'project_bypass_approvals',
+    sql: /* sql */ `
+    -- Opt-in per project: agents' commands that would wait for approval run at once. Blocked commands stay blocked.
+    ALTER TABLE projects ADD COLUMN bypass_approvals INTEGER NOT NULL DEFAULT 0;
+    `
   }
 ]

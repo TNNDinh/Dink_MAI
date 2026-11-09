@@ -1,7 +1,9 @@
 import { spawn as nodeSpawn } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
 import { BaseChatProvider, ResponseAccumulator } from './base'
 import { ProviderError } from './http'
-import type { ChatMessage, ChatRequest, ConnectionStatus, ModelInfo, StreamEvent, ToolCall, ToolDefinition } from './types'
+import type { ChatMessage, ChatRequest, ConnectionStatus, ImagePart, ModelInfo, StreamEvent, ToolCall, ToolDefinition } from './types'
 
 /**
  * Chat provider that drives the locally installed Claude Code CLI (`claude -p`) instead of calling an HTTP API.
@@ -27,8 +29,63 @@ export function setSpawnForTests(fn: typeof nodeSpawn | undefined): void {
   spawn = fn ?? nodeSpawn
 }
 
+/**
+ * `spawn('claude')` without a shell finds only `claude.exe`, and on Windows the installer often leaves that file outside PATH
+ * (`~/.local/bin`) while PATH holds only npm's `claude.cmd` shim, which cannot be started without a shell. A shell is not an
+ * option: the system prompt is passed as an argument and cmd.exe would mangle or interpret it. So look for the real .exe.
+ * Anything other than the bare name `claude` (a full path the user typed) is used as is.
+ */
+export function resolveClaudeCommand(
+  command: string,
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+  exists: (p: string) => boolean = existsSync
+): string {
+  if (platform !== 'win32' || command.toLowerCase() !== 'claude') return command
+  const dirs = (env.PATH ?? env.Path ?? '').split(';').filter(Boolean)
+  const home = env.USERPROFILE
+  const candidates = [
+    ...dirs.map((d) => join(d, 'claude.exe')),
+    ...(home ? [join(home, '.local', 'bin', 'claude.exe')] : []),
+    ...(env.APPDATA ? [join(env.APPDATA, 'npm', 'node_modules', '@anthropic-ai', 'claude-code', 'bin', 'claude.exe')] : [])
+  ]
+  return candidates.find((c) => exists(c)) ?? command
+}
+
 /** Flatten a conversation into one prompt; the CLI takes a single prompt per call. */
 export function renderTranscript(messages: ChatMessage[]): string {
+  return renderWith(messages, () => '[image omitted]')
+}
+
+const IMAGE_MARK = '\u0001IMAGE\u0001'
+
+/** True when any message carries a picture: the CLI then has to be fed structured input instead of plain text. */
+export function hasImages(messages: ChatMessage[]): boolean {
+  return messages.some((m) => Array.isArray(m.content) && m.content.some((p) => p.type === 'image'))
+}
+
+export type InputBlock = { type: 'text'; text: string } | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
+
+/** The same transcript as renderTranscript, as content blocks with each picture where it appeared. */
+export function renderTranscriptBlocks(messages: ChatMessage[]): InputBlock[] {
+  const images = messages.flatMap((m) => (Array.isArray(m.content) ? m.content.filter((p): p is ImagePart => p.type === 'image') : []))
+  const text = renderWith(messages, () => IMAGE_MARK)
+  const blocks: InputBlock[] = []
+  const pieces = text.split(IMAGE_MARK)
+  pieces.forEach((piece, i) => {
+    if (piece) blocks.push({ type: 'text', text: piece })
+    const img = images[i]
+    if (i < pieces.length - 1 && img) blocks.push({ type: 'image', source: { type: 'base64', media_type: img.mimeType, data: img.dataBase64 } })
+  })
+  return blocks
+}
+
+/** One line of stream-json input: the whole conversation as a single user turn. */
+export function renderStreamInput(messages: ChatMessage[]): string {
+  return `${JSON.stringify({ type: 'user', message: { role: 'user', content: renderTranscriptBlocks(messages) } })}\n`
+}
+
+function renderWith(messages: ChatMessage[], image: () => string): string {
   const lines: string[] = []
   for (const m of messages) {
     const label = m.role === 'user' ? 'User' : 'Assistant'
@@ -39,7 +96,7 @@ export function renderTranscript(messages: ChatMessage[]): string {
     const parts: string[] = []
     for (const p of m.content) {
       if (p.type === 'text') parts.push(p.text)
-      else if (p.type === 'image') parts.push('[image omitted]')
+      else if (p.type === 'image') parts.push(image())
       else if (p.type === 'tool_call') parts.push(`(requested tool ${p.name} [${p.id}] with ${JSON.stringify(p.arguments)})`)
       else if (p.type === 'tool_result') parts.push(`(tool result [${p.toolCallId}]${p.isError ? ' ERROR' : ''}: ${p.content})`)
     }
@@ -99,6 +156,36 @@ function parseInvokeBlocks(text: string, idPrefix: string, tools: ToolDefinition
   return { text: rest, calls }
 }
 
+/**
+ * A long JSON block sometimes ends one or two closing brackets short. When that is the only problem (balanced outside strings,
+ * nothing left open in a string), the missing closers are added; anything else is left alone and still fails to parse.
+ */
+export function closeMissingBrackets(raw: string): string {
+  const stack: string[] = []
+  let out = ''
+  let inString = false
+  for (let i = 0; i < raw.length; i++) {
+    const c = raw[i]
+    if (inString) {
+      out += c
+      if (c === '\\') out += raw[++i] ?? ''
+      else if (c === '"') inString = false
+      continue
+    }
+    if (c === '"') inString = true
+    else if (c === '{') stack.push('}')
+    else if (c === '[') stack.push(']')
+    else if (c === '}' || c === ']') {
+      // A closer that does not match the innermost open bracket: the ones above its partner were forgotten, add them here.
+      const at = stack.lastIndexOf(c)
+      if (at < 0) return raw
+      out += stack.splice(at).reverse().slice(0, -1).join('')
+    }
+    out += c
+  }
+  return inString ? raw : out + stack.reverse().join('')
+}
+
 export function parseToolCalls(text: string, idPrefix: string, tools?: ToolDefinition[]): { text: string; calls: ToolCall[] } {
   const fenced = /```(?:tool_calls|json)?\s*\n?(\[[\s\S]*?\])\s*```/.exec(text)
   // Models sometimes drop the opening or the closing fence around the array.
@@ -109,7 +196,11 @@ export function parseToolCalls(text: string, idPrefix: string, tools?: ToolDefin
   try {
     arr = JSON.parse(raw)
   } catch {
-    return { text, calls: [] }
+    try {
+      arr = JSON.parse(closeMissingBrackets(raw))
+    } catch {
+      return { text, calls: [] }
+    }
   }
   if (!Array.isArray(arr)) return { text, calls: [] }
   const calls: ToolCall[] = []
@@ -120,7 +211,8 @@ export function parseToolCalls(text: string, idPrefix: string, tools?: ToolDefin
     const args = o.arguments ?? o.input
     calls.push({ id: `${idPrefix}-${calls.length}`, name: o.name, arguments: args && typeof args === 'object' && !Array.isArray(args) ? (args as Record<string, unknown>) : {} })
   }
-  if (!calls.length) return { text, calls: [] }
+  // An empty array after a call written in the other format ("[]" as a self-correction) must not hide that call.
+  if (!calls.length) return parseInvokeBlocks(text, idPrefix, tools) ?? { text, calls: [] }
   const rest = fenced ? text.replace(fenced[0], '').trim() : ''
   return { text: rest, calls }
 }
@@ -138,6 +230,8 @@ export function buildClaudeArgs(req: ChatRequest): string[] {
     '--mcp-config', '{"mcpServers":{}}',
     '--disable-slash-commands'
   ]
+  // Pictures cannot travel in the plain-text prompt: switch the CLI to structured input only when there is one.
+  if (hasImages(req.messages)) args.push('--input-format', 'stream-json')
   if (req.model) args.push('--model', req.model)
   const system = [req.system, req.tools?.length ? toolInstructions(req.tools) : undefined].filter(Boolean).join('\n\n')
   if (system) args.push('--system-prompt', system)
@@ -147,9 +241,9 @@ export function buildClaudeArgs(req: ChatRequest): string[] {
 export class ClaudeCodeProvider extends BaseChatProvider {
   readonly kind = 'claude-code' as const
 
-  /** The base URL field holds the command to run (default: `claude`). */
+  /** The base URL field holds the command to run (default: `claude`). A bare `claude` is resolved to the real executable on Windows. */
   private get command(): string {
-    return this.config.baseUrl || 'claude'
+    return resolveClaudeCommand(this.config.baseUrl || 'claude')
   }
 
   protected authHeaders(): Record<string, string> {
@@ -214,7 +308,7 @@ export class ClaudeCodeProvider extends BaseChatProvider {
     })
     const exited = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)))
     child.stdin.on('error', () => undefined)
-    child.stdin.end(renderTranscript(req.messages))
+    child.stdin.end(hasImages(req.messages) ? renderStreamInput(req.messages) : renderTranscript(req.messages))
 
     const timeoutMs = this.config.timeoutMs ?? DEFAULT_TIMEOUT_MS
     const timer = setTimeout(() => child.kill(), timeoutMs)
@@ -256,6 +350,8 @@ export class ClaudeCodeProvider extends BaseChatProvider {
               acc.usage.cachedInputTokens = u.cache_read_input_tokens
               acc.usage.outputTokens = u.output_tokens ?? 0
             }
+            // The CLI prices the call itself (API-equivalent; on a subscription plan nothing is billed per call).
+            if (typeof ev.total_cost_usd === 'number' && Number.isFinite(ev.total_cost_usd) && ev.total_cost_usd >= 0) acc.usage.costUsd = ev.total_cost_usd
             if (ev.stop_reason === 'max_tokens') acc.stopReason = 'max_tokens'
           } else if (ev.type === 'system' && typeof ev.model === 'string') {
             acc.setModel(ev.model)

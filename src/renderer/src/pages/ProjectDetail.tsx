@@ -15,6 +15,7 @@ export function ProjectDetail({ project }: { project: Project }) {
   const [budget, setBudget] = useState(project.budgetUsd === null ? '' : String(project.budgetUsd))
   const [maxIter, setMaxIter] = useState(String(project.maxIterations))
   const [autoRecovery, setAutoRecovery] = useState(project.autoRecovery)
+  const [bypass, setBypass] = useState(project.bypassApprovals)
   const [error, setError] = useState<string | null>(null)
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -27,7 +28,8 @@ export function ProjectDetail({ project }: { project: Project }) {
     status !== project.status ||
     budget !== (project.budgetUsd === null ? '' : String(project.budgetUsd)) ||
     maxIter !== String(project.maxIterations) ||
-    autoRecovery !== project.autoRecovery
+    autoRecovery !== project.autoRecovery ||
+    bypass !== project.bypassApprovals
 
   async function save() {
     setBusy(true)
@@ -44,7 +46,8 @@ export function ProjectDetail({ project }: { project: Project }) {
         status,
         budgetUsd: budgetNum,
         maxIterations: Number(maxIter) || project.maxIterations,
-        autoRecovery
+        autoRecovery,
+        bypassApprovals: bypass
       })
       await refresh()
       setSaved(true)
@@ -139,6 +142,17 @@ export function ProjectDetail({ project }: { project: Project }) {
                 <span className="mt-0.5 block text-muted">
                   Before each agent task a checkpoint is saved (if the project is a git repository). When a task fails, the files it changed with the file tools are put back before
                   the retry, and the agent is told why. Changes made by shell commands are not undone, and stopping a run never rolls anything back.
+                </span>
+              </span>
+            </label>
+            <label className={`flex cursor-pointer items-start gap-2.5 rounded-md border p-3 ${bypass ? 'border-err/40 bg-err/10' : 'border-line bg-elev/40'}`}>
+              <input type="checkbox" className="mt-0.5" checked={bypass} onChange={(e) => setBypass(e.target.checked)} data-bypass-approvals />
+              <span className="text-xs">
+                <span className="font-medium text-fg">Bypass approvals</span>
+                <span className="mt-0.5 block text-muted">
+                  Agents of this project run their commands without asking you first, including commands that chain others or touch files outside the project, and anything already
+                  waiting is run when you save. Commands that are blocked outright (deleting a drive, registry edits, shutdown, force-push, downloading and running code…) are still refused.
+                  Commands run with your Windows permissions and there is no sandbox, so turn this on only for projects and agents you trust. Every bypassed command is logged.
                 </span>
               </span>
             </label>

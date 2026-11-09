@@ -1,8 +1,8 @@
-import { Lock, ShieldAlert } from 'lucide-react'
+import { FolderOpen, Lock, ShieldAlert } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import type { CommandPolicyInfo } from '../../../shared/ipc'
+import type { AtuStatus, CommandPolicyInfo } from '../../../shared/ipc'
 import { useStudio } from '../store'
-import { Badge, Card, CardHeader, PageHeader } from '../components/ui'
+import { Badge, Button, Card, CardHeader, PageHeader } from '../components/ui'
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -15,7 +15,65 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
-/** Read-only for now: shows the facts that matter for trust. Editable settings arrive with the features they control. */
+const SOURCE_TEXT = { setting: 'picked in Settings', env: 'DINK_ATU_DIR variable', default: 'found automatically' } as const
+
+/** Where Dink_ATU (APK to Unity) is on this PC: pick the folder instead of downloading it again. */
+function AtuTool() {
+  const [status, setStatus] = useState<AtuStatus | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  useEffect(() => {
+    void window.api.invoke('tools:atuStatus').then(setStatus, () => undefined)
+  }, [])
+  const run = async (channel: 'tools:atuBrowse' | 'tools:atuClear') => {
+    setBusy(true)
+    setError('')
+    try {
+      const next = await window.api.invoke(channel)
+      if (next) setStatus(next)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <Card>
+      <CardHeader
+        title="Tools"
+        action={
+          <div className="flex gap-2">
+            {status?.configured && (
+              <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run('tools:atuClear')}>
+                Forget
+              </Button>
+            )}
+            <Button size="sm" disabled={busy} onClick={() => void run('tools:atuBrowse')}>
+              <FolderOpen size={13} /> Browse…
+            </Button>
+          </div>
+        }
+      />
+      <dl>
+        <Row label="Dink_ATU (APK to Unity)">
+          {!status ? (
+            'Checking…'
+          ) : status.dir ? (
+            <span className="text-ok">{status.dir}</span>
+          ) : (
+            <span className="text-warn">Not found. Press Browse and pick the folder that contains apk2unity.ps1 (for example D:\apk2unity).</span>
+          )}
+        </Row>
+        {status?.dir && <Row label="Chosen how">{SOURCE_TEXT[status.source ?? 'default']}</Row>}
+        {status?.dir && !status.toolsInstalled && <Row label="Setup">This folder has no tools/ yet. Run setup.ps1 -WithGhidra in it once (about 600 MB).</Row>}
+        {status?.configured && status.configuredValid === false && <Row label="Warning">The folder you picked ({status.configured}) no longer has apk2unity.ps1, so it is being ignored.</Row>}
+        {error && <Row label="Error"><span className="text-err">{error}</span></Row>}
+      </dl>
+    </Card>
+  )
+}
+
+/** Mostly read-only: shows the facts that matter for trust, plus where external tools live. */
 export function Settings() {
   const info = useStudio((s) => s.info)
   const [policy, setPolicy] = useState<CommandPolicyInfo | null>(null)
@@ -81,6 +139,8 @@ export function Settings() {
           </div>
         )}
       </Card>
+
+      <AtuTool />
 
       <Card>
         <CardHeader title="Storage" />

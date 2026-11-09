@@ -1,9 +1,10 @@
 import { EventEmitter } from 'node:events'
 import { PassThrough } from 'node:stream'
+import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { PROVIDER_CATALOG } from '../src/main/providers/catalog'
-import { buildClaudeArgs, parseToolCalls, renderTranscript, setSpawnForTests, toolInstructions } from '../src/main/providers/claude-code'
-import { createChatProvider } from '../src/main/providers'
+import { buildClaudeArgs, closeMissingBrackets, hasImages, parseToolCalls, renderStreamInput, renderTranscript, renderTranscriptBlocks, resolveClaudeCommand, setSpawnForTests, toolInstructions } from '../src/main/providers/claude-code'
+import { addUsage, createChatProvider, estimateCostUsd } from '../src/main/providers'
 import { Database } from '../src/main/db/database'
 import { ConnectionService } from '../src/main/services/connections'
 import { EventService } from '../src/main/services/events'
@@ -72,6 +73,48 @@ describe('Claude Code provider', () => {
     expect(args.slice(args.indexOf('--system-prompt'), args.indexOf('--system-prompt') + 2)).toEqual(['--system-prompt', 'You are a tester'])
   })
 
+  describe('pictures (a screenshot the agent must be able to see)', () => {
+    const shot = { type: 'image' as const, mimeType: 'image/jpeg', dataBase64: 'QUJD' }
+    const convo = [
+      { role: 'user' as const, content: 'play the game' },
+      { role: 'assistant' as const, content: [{ type: 'tool_call' as const, id: 'c1', name: 'android_play', arguments: { action: 'screenshot' } }] },
+      { role: 'user' as const, content: [{ type: 'tool_result' as const, toolCallId: 'c1', content: 'OK. Screenshot attached.' }, shot, { type: 'text' as const, text: 'Two rounds left.' }] }
+    ]
+
+    it('uses plain-text input when there is no picture, and structured input when there is one', () => {
+      expect(hasImages([{ role: 'user', content: 'hi' }])).toBe(false)
+      expect(buildClaudeArgs(req())).not.toContain('--input-format')
+      expect(hasImages(convo)).toBe(true)
+      const args = buildClaudeArgs(req({ messages: convo }))
+      expect(args.slice(args.indexOf('--input-format'), args.indexOf('--input-format') + 2)).toEqual(['--input-format', 'stream-json'])
+    })
+
+    it('puts each picture where it appeared in the conversation', () => {
+      const blocks = renderTranscriptBlocks(convo)
+      expect(blocks.map((b) => b.type)).toEqual(['text', 'image', 'text'])
+      expect(blocks[1]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'QUJD' } })
+      expect((blocks[0] as { text: string }).text).toContain('OK. Screenshot attached.')
+      expect((blocks[2] as { text: string }).text).toMatch(/^\s*Two rounds left\./)
+      // The plain-text form still says a picture was left out rather than pretending it was shown.
+      expect(renderTranscript(convo)).toContain('[image omitted]')
+    })
+
+    it('sends one stream-json user line and the fake process receives it', async () => {
+      const line = renderStreamInput(convo)
+      expect(line.endsWith(String.fromCharCode(10))).toBe(true)
+      const parsed = JSON.parse(line)
+      expect(parsed).toMatchObject({ type: 'user', message: { role: 'user' } })
+      expect(parsed.message.content.some((b: { type: string }) => b.type === 'image')).toBe(true)
+
+      const capture: { args?: string[]; stdin?: string } = {}
+      setSpawnForTests(fakeSpawn([result({ result: 'I see a menu.' })], 0, capture))
+      const p = createChatProvider({ id: 'c1', kind: 'claude-code', baseUrl: '' })
+      await p.chat(req({ messages: convo }))
+      expect(capture.args).toContain('--input-format')
+      expect(JSON.parse(capture.stdin!.trim()).message.content.filter((b: { type: string }) => b.type === 'image')).toHaveLength(1)
+    })
+  })
+
   it('sends a single user message as-is and labels longer conversations', () => {
     expect(renderTranscript([{ role: 'user', content: 'hello' }])).toBe('hello')
     const t = renderTranscript([
@@ -95,8 +138,25 @@ describe('Claude Code provider', () => {
     expect(res.text).toBe('Hi there')
     expect(res.usage).toEqual({ inputTokens: 14, cachedInputTokens: 4, outputTokens: 3 })
     expect(res.stopReason).toBe('end')
-    expect(capture.command).toBe('claude')
+    expect(capture.command).toMatch(/claude(.exe)?$/i)
     expect(capture.stdin).toBe('hello')
+  })
+
+  it('takes the cost the CLI reports, and wins over any price table', async () => {
+    setSpawnForTests(fakeSpawn([result({ total_cost_usd: 0.0421 })]))
+    const p = createChatProvider({ id: 'c1', kind: 'claude-code', baseUrl: 'claude' })
+    const res = await p.chat(req())
+    expect(res.usage.costUsd).toBe(0.0421)
+    expect(estimateCostUsd(res.usage, { inputPerMTok: 0, outputPerMTok: 0 })).toBe(0.0421)
+    expect(estimateCostUsd({ inputTokens: 5, outputTokens: 5 }, undefined)).toBeNull()
+    expect(addUsage({ inputTokens: 1, outputTokens: 1, costUsd: 0.5 }, { inputTokens: 1, outputTokens: 1 }).costUsd).toBe(0.5)
+  })
+
+  it('leaves the cost unknown when the CLI reports none (Claude Code is not priced as a free local model)', async () => {
+    setSpawnForTests(fakeSpawn([result()]))
+    const p = createChatProvider({ id: 'c1', kind: 'claude-code', baseUrl: 'claude' })
+    const res = await p.chat(req())
+    expect(res.usage.costUsd).toBeUndefined()
   })
 
   it('falls back to the final result text when the CLI sends no partial chunks', async () => {
@@ -213,6 +273,36 @@ describe('parseToolCalls with sloppy fences', () => {
   })
 })
 
+describe('parseToolCalls with a block that ends short of closing brackets', () => {
+  const whole = JSON.stringify([{ name: 'submit_plan', arguments: { tasks: [{ key: 'a', title: 'Say "hi" {x}', description: 'line\nwith ] and } inside', depends_on: ['b'] }] } }])
+
+  it('adds the missing closers (a real planner reply lost the last "}")', () => {
+    const short = whole.slice(0, -2) + whole.slice(-1) // drops one "}"
+    expect(() => JSON.parse(short)).toThrow()
+    const r = parseToolCalls(`\`\`\`tool_calls\n${short}\n\`\`\``, 'x')
+    expect(r.calls).toHaveLength(1)
+    expect(r.calls[0].name).toBe('submit_plan')
+    expect(r.calls[0].arguments).toEqual({ tasks: [{ key: 'a', title: 'Say "hi" {x}', description: 'line\nwith ] and } inside', depends_on: ['b'] }] })
+  })
+
+  it('does not guess when the damage is anything else', () => {
+    expect(closeMissingBrackets('[{"a":1}')).toBe('[{"a":1}]')
+    expect(closeMissingBrackets('[{"a":"unterminated}')).toBe('[{"a":"unterminated}')
+    expect(closeMissingBrackets('[{"a":1}}]')).toBe('[{"a":1}}]') // an extra closer is not something to guess about
+    expect(closeMissingBrackets('[{"a":[1}]')).toBe('[{"a":[1]}]') // a forgotten "]" in the middle is added where it is missing
+    expect(parseToolCalls('```tool_calls\n[{"name":"x","arguments":{"a":}]\n```', 'x').calls).toEqual([])
+  })
+})
+
+describe('a call in XML form followed by an empty list', () => {
+  it('still runs the call (real failure: the model wrote an <invoke>, then "[]" as a self-correction)', () => {
+    const text = '<invoke name="write_file">\n<parameter name="path">docs/a.md</parameter>\n<parameter name="content">hi</parameter>\n</invoke>\n\nI must use the correct format.\n\n```tool_calls\n[]\n```'
+    const r = parseToolCalls(text, 'x')
+    expect(r.calls).toHaveLength(1)
+    expect(r.calls[0]).toMatchObject({ name: 'write_file', arguments: { path: 'docs/a.md', content: 'hi' } })
+  })
+})
+
 describe('parseToolCalls with the XML form', () => {
   const defs = [{ name: 'write_file', description: '', parameters: { type: 'object', properties: { path: { type: 'string' }, content: { type: 'string' }, count: { type: 'integer' } } } }]
   it('turns <invoke> blocks into calls, keeping strings raw and typing the rest by schema', () => {
@@ -227,5 +317,27 @@ describe('parseToolCalls with the XML form', () => {
     expect(parseToolCalls(text, 'x', defs).calls[0].arguments).toEqual({ path: 'a' })
     expect(parseToolCalls(text, 'x', defs).text).toBe('')
     expect(parseToolCalls('no tools here', 'x', defs)).toEqual({ text: 'no tools here', calls: [] })
+  })
+})
+
+describe('resolveClaudeCommand', () => {
+  const p = (...parts: string[]) => join(...parts)
+  const env = { PATH: `${p('C:', 'npm')};${p('C:', 'bin')}`, USERPROFILE: p('C:', 'Users', 'u'), APPDATA: p('C:', 'Users', 'u', 'AppData', 'Roaming') }
+  const only = (x: string) => (y: string) => y === x
+
+  it('finds claude.exe outside PATH in ~/.local/bin (PATH only has the npm .cmd shim)', () => {
+    const exe = p('C:', 'Users', 'u', '.local', 'bin', 'claude.exe')
+    expect(resolveClaudeCommand('claude', env, 'win32', only(exe))).toBe(exe)
+  })
+  it('prefers an .exe found on PATH', () => {
+    const exe = p('C:', 'bin', 'claude.exe')
+    expect(resolveClaudeCommand('claude', env, 'win32', only(exe))).toBe(exe)
+  })
+  it('keeps the bare name when nothing is found, so the error message still names it', () => {
+    expect(resolveClaudeCommand('claude', env, 'win32', () => false)).toBe('claude')
+  })
+  it('leaves a custom command and other platforms alone', () => {
+    expect(resolveClaudeCommand('D:/tools/claude.exe', env, 'win32', () => true)).toBe('D:/tools/claude.exe')
+    expect(resolveClaudeCommand('claude', env, 'linux', () => true)).toBe('claude')
   })
 })

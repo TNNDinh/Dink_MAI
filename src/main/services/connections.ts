@@ -522,6 +522,8 @@ export class ConnectionService {
     )
     if (p) return { inputPerMTok: p.i, outputPerMTok: p.o }
     const kind = this.db.get<{ kind: ProviderKind }>(`SELECT kind FROM provider_connections WHERE id = ?`, connectionId)?.kind
-    return kind && PROVIDER_CATALOG[kind]?.local ? { inputPerMTok: 0, outputPerMTok: 0 } : undefined
+    // Local model servers cost nothing per call. Claude Code is "local" only in that it needs no key: it is not free, so
+    // its cost comes from what the CLI reports, and is unknown (not 0) when it reports nothing.
+    return kind && kind !== 'claude-code' && PROVIDER_CATALOG[kind]?.local ? { inputPerMTok: 0, outputPerMTok: 0 } : undefined
   }
 }

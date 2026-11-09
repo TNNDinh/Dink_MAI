@@ -51,6 +51,8 @@ export interface Project {
    * the write/delete tools are put back before it is retried.
    */
   autoRecovery: boolean
+  /** Agents' commands run without waiting for approval. Hard-blocked commands are still refused. */
+  bypassApprovals: boolean
   createdAt: number
   updatedAt: number
 }
@@ -75,6 +77,7 @@ export interface UpdateProjectInput {
   budgetUsd?: number | null
   maxIterations?: number
   autoRecovery?: boolean
+  bypassApprovals?: boolean
 }
 
 export interface FolderInspection {
@@ -138,6 +141,20 @@ export interface AppInfo {
   dbVersion: number
   /** True when OS-level encryption (Windows DPAPI) is available for API keys. */
   encryptionAvailable: boolean
+}
+
+/** Where the Dink_ATU tool (APK to Unity) is installed, as the app sees it. */
+export interface AtuStatus {
+  /** The folder that will be used, or null when none was found. */
+  dir: string | null
+  /** Why that folder was chosen: picked in Settings, the DINK_ATU_DIR variable, or a usual clone folder. */
+  source: 'setting' | 'env' | 'default' | null
+  /** The folder picked in Settings (null = none). */
+  configured: string | null
+  /** null when nothing is configured; false when the picked folder no longer holds apk2unity.ps1. */
+  configuredValid: boolean | null
+  /** True when the folder has the tools/ subfolder that setup.ps1 downloads. */
+  toolsInstalled: boolean
 }
 
 export interface RecentEventsQuery {
@@ -890,6 +907,11 @@ export interface IpcContract {
   /** Unregisters the project from the studio. Never deletes files on disk. */
   'projects:remove': (id: string) => void
   'projects:pickFolder': () => string | null
+  'tools:atuStatus': () => AtuStatus
+  /** Opens a folder dialog for the Dink_ATU folder. Saves it when it holds apk2unity.ps1, throws otherwise. null = cancelled. */
+  'tools:atuBrowse': () => AtuStatus | null
+  /** Forgets the picked folder (the automatic search is used again). */
+  'tools:atuClear': () => AtuStatus
   'projects:inspectFolder': (path: string) => FolderInspection
   'projects:reveal': (id: string) => void
   'dashboard:stats': () => DashboardStats
@@ -994,6 +1016,9 @@ export const IPC_CHANNELS: Record<IpcChannel, true> = {
   'projects:update': true,
   'projects:remove': true,
   'projects:pickFolder': true,
+  'tools:atuStatus': true,
+  'tools:atuBrowse': true,
+  'tools:atuClear': true,
   'projects:inspectFolder': true,
   'projects:reveal': true,
   'dashboard:stats': true,

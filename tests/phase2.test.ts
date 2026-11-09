@@ -12,6 +12,7 @@ import { Database } from '../src/main/db/database'
 import { AutomationService } from '../src/main/automation/service'
 import { GitService } from '../src/main/git/service'
 import { PreviewService } from '../src/main/preview/service'
+import { ToolPaths } from '../src/main/services/tool-paths'
 import { assertSafeProjectRoot, isPathInside, normalizePath, toFolderName } from '../src/main/security/path-guard'
 import { detectProjectType } from '../src/main/workspace/detect-project-type'
 import { EventService } from '../src/main/services/events'
@@ -328,6 +329,7 @@ describe('IPC registration', () => {
       git: new GitService(db, events, workspace),
       automation: new AutomationService(events, workspace, commands),
       preview: new PreviewService(events, workspace),
+      toolPaths: new ToolPaths(db),
       host: {
         emitChat: () => undefined,
         appInfo: () => ({ name: 't', version: '0', electron: '0', node: '0', platform: 'win32', userDataPath: '', defaultProjectsRoot: '', dbVersion: 1, encryptionAvailable: true }),

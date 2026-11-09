@@ -4,7 +4,7 @@ import { TASK_STATUSES } from '../../shared/ipc'
 import type { AssetService } from '../assets/service'
 import { guessKind } from '../assets/conventions'
 import type { Database } from '../db/database'
-import type { ChatMessage, ContentPart, ToolCall, ToolDefinition, ToolResultPart } from '../providers/types'
+import type { ChatMessage, ContentPart, ImagePart, ToolCall, ToolDefinition, ToolResultPart } from '../providers/types'
 import type { AgentService } from '../services/agents'
 import type { EventService } from '../services/events'
 import type { TaskService } from '../services/tasks'
@@ -14,11 +14,21 @@ import { CallCancelledError, CallFailedError, type LlmGateway } from './gateway'
 import { plannerInstructions, SUBMIT_PLAN_TOOL, validatePlan, type PlanTask, type TeamMember } from './plan'
 import { ensureBridgePackage, INSTALLED_NOTE } from './unity-bridge'
 import { discoverSkills } from './skill-tools'
+import { EVIDENCE_RULES } from './evidence'
+import { dropOldImages, trimOldToolResults } from './history'
 import { toolsFor, type AgentTool, type ToolContext } from './tools'
 
 export const MAX_TOOL_ROUNDS = 12
+/** Playing a game is many small steps (look, tap, look); the per-task cost cap still bounds the spending. */
+export const PLAY_TOOL_ROUNDS = 40
+/** How many tool rounds a task may use, given the tools its agent has. */
+export const toolRoundsFor = (toolNames: { has(name: string): boolean }): number => (toolNames.has('android_play') ? PLAY_TOOL_ROUNDS : MAX_TOOL_ROUNDS)
+/** True when a reply still holds tool-call markup (an unreadable call, or an empty list written after one): it is not a final report. */
+export const leftoverToolMarkup = (text: string): boolean => /<(?:[\w-]+:)?(?:invoke|function_calls)\b|```\s*tool_calls/.test(text)
 export const MAX_PLAN_ROUNDS = 3
 export const MAX_ATTEMPTS = 2
+/** Most one task may spend (all its attempts together). A runaway loop stops here instead of at the whole run's budget. */
+export const MAX_TASK_COST_USD = 10
 export const DEFAULT_CONCURRENCY = 3
 const MAX_CONCURRENCY = 8
 const MAX_RESULT_CHARS = 20_000
@@ -49,6 +59,7 @@ export function environmentNote(tools: ReadonlySet<string>): string {
   if (tools.has('generate_image')) {
     parts.push('Pictures: generate_image makes a picture with the team’s image model and saves it in the project’s asset folder. Each picture costs money, so request only what the task needs and describe each one completely. If it reports that no image model is available, say so in your report instead of describing a picture as if it existed. list_assets shows what already exists.')
   }
+  if (tools.has('apk_to_unity') || tools.has('android_play')) parts.push(EVIDENCE_RULES)
   parts.push('Never claim to have done something you did not do or cannot do, and never invent file contents or command output. When you are finished, reply with a concise report of what you produced (file paths, results) and any open problems.')
   return parts.join(' ')
 }
@@ -57,6 +68,10 @@ export function environmentNote(tools: ReadonlySet<string>): string {
 
 export class BudgetExceeded extends Error {}
 export class AgentLimitReached extends Error {}
+/** The agent used all its tool rounds without finishing. Running the same task again from scratch would spend the same money to reach the same wall. */
+export class ToolRoundsExhausted extends Error {}
+/** One task spent more than MAX_TASK_COST_USD. */
+export class TaskCostCapReached extends Error {}
 class PlanFailed extends Error {}
 
 // ------------------------------------------------------------------ rows
@@ -445,7 +460,7 @@ export class Orchestrator {
       description: list[0].systemPrompt.split('\n')[0].slice(0, 160)
     }))
     const existing = this.db.all<{ title: string }>(`SELECT title FROM tasks WHERE run_id = ?`, run.id).map((r) => r.title)
-    const messages: ChatMessage[] = [{ role: 'user', content: plannerInstructions({ projectName: project.name, projectType: project.type, goal: run.goal, team: members, existing }) }]
+    const messages: ChatMessage[] = [{ role: 'user', content: plannerInstructions({ projectName: project.name, projectType: project.type, goal: run.goal, team: members, existing, canPlay: this.workspace !== null && team.some((a) => a.kind !== 'image' && a.permissions.runCommands !== 'none' && a.permissions.writeFiles) }) }]
     const roles = new Set(byRole.keys())
     const log = (role: 'assistant' | 'user' | 'tool', content: string): void => this.log(run.project_id, run.id, null, pm.id, role, content)
     log('user', messages[0].content as string)
@@ -471,7 +486,7 @@ export class Orchestrator {
         const call = response.toolCalls.find((c) => c.name === SUBMIT_PLAN_TOOL.name)
         if (!call) {
           messages.push({ role: 'assistant', content: response.text || '(no answer)' })
-          messages.push({ role: 'user', content: 'You must submit the plan by calling the submit_plan tool. Do that now.' })
+          messages.push({ role: 'user', content: 'You must submit the plan by calling the submit_plan tool. Do that now. If you already tried, your reply could not be read as a tool call: send exactly one tool call with valid JSON (every { and [ closed, quotes inside text escaped), and keep each task description short (a few sentences).' })
           continue
         }
         const verdict = validatePlan(call.arguments, roles)
@@ -654,7 +669,7 @@ export class Orchestrator {
         this.events.record({ projectId: run.project_id, runId, agentId: agent.id, level: 'warn', type: 'task.paused', message: `“${task.title}” paused: ${e.message}` })
       } else {
         const message = e instanceof Error ? e.message : String(e)
-        const retryable = !(e instanceof AgentLimitReached) && (!(e instanceof CallFailedError) || e.retryable)
+        const retryable = !(e instanceof AgentLimitReached) && !(e instanceof ToolRoundsExhausted) && !(e instanceof TaskCostCapReached) && (!(e instanceof CallFailedError) || e.retryable)
         // Auto Recovery: undo what the failed attempt did to the files (before the locks are released, so nobody else can have touched them).
         const undone = await recovery?.rollback(rt0, message)
         if (retryable && attempts < MAX_ATTEMPTS) {
@@ -696,22 +711,26 @@ export class Orchestrator {
     const toolDefs = [...available.values()].map((t) => t.def)
     let reminders = 0
     let emptyRetries = 0
+    let malformedRetries = 0
     this.ensureUnityBridge(run, agent)
     const prompt = this.taskPrompt(run, task, agent, step?.context)
     const messages: ChatMessage[] = [{ role: 'user', content: prompt }]
     const log = (role: 'assistant' | 'user' | 'tool', content: string): void => this.log(run.project_id, run.id, task.id, agent.id, role, content)
     log('user', prompt)
-    const ctx: ToolContext = { db: this.db, events: this.events, tasks: this.tasks, agent, projectId: run.project_id, runId: run.id, taskId: task.id, state, workspace: this.workspace?.workspace, commands: this.workspace?.commands, assets: this.assets() ?? undefined, imageTarget: this.imageTarget(run.project_id), signal }
+    const ctx: ToolContext = { db: this.db, events: this.events, tasks: this.tasks, agent, projectId: run.project_id, runId: run.id, taskId: task.id, state, workspace: this.workspace?.workspace, commands: this.workspace?.commands, assets: this.assets() ?? undefined, imageTarget: this.imageTarget(run.project_id), signal, canSeeImages: this.canSeeImages(agent) }
     let usedTools = false
-    for (let round = 1; round <= MAX_TOOL_ROUNDS; round++) {
+    const maxRounds = toolRoundsFor(available)
+    for (let round = 1; round <= maxRounds; round++) {
       if (signal.aborted) throw new CallCancelledError()
-      this.assertLimits(run.id, agent)
+      this.assertLimits(run.id, agent, task.id)
+      // The last round has no tools: the agent must hand over what it has instead of running out of rounds with nothing.
+      const lastRound = round === maxRounds && !step?.mustCall
       const { response, costUsd } = await this.gateway.complete({
         connectionId: agent.connectionId!,
         model: agent.model!,
         system: `${agent.systemPrompt}\n\n${environmentNote(new Set(available.keys()))}`,
         messages,
-        tools: toolDefs.length > 0 ? toolDefs : undefined,
+        tools: toolDefs.length > 0 && !lastRound ? toolDefs : undefined,
         maxTokens: agent.maxTokens ?? undefined,
         temperature: agent.temperature ?? undefined,
         signal,
@@ -719,7 +738,7 @@ export class Orchestrator {
       })
       this.noteUnpriced(run, agent, costUsd, rt)
       if (response.text.trim()) log('assistant', response.text)
-      if (response.toolCalls.length === 0) {
+      if (response.toolCalls.length === 0 || lastRound) {
         const must = step?.mustCall
         if (must && !must.satisfied() && reminders < 2) {
           reminders++
@@ -729,6 +748,14 @@ export class Orchestrator {
           continue
         }
         let text = response.text.trim()
+        // A reply that is only a botched tool call is not a report: say so and let the model try again (twice at most).
+        if (!lastRound && toolDefs.length > 0 && leftoverToolMarkup(text) && malformedRetries < 2) {
+          malformedRetries++
+          messages.push({ role: 'assistant', content: text })
+          messages.push({ role: 'user', content: `Your last reply contained a tool call that could not be read, so nothing was run. Call the tool again in the exact format, using one of these names: ${[...available.keys()].join(', ')}. If you are finished, write your report in plain words without any tool call.` })
+          log('user', 'Reminder: the last tool call could not be read.')
+          continue
+        }
         if (!text) {
           if (!usedTools) throw new Error('The model returned an empty answer.')
           // An empty reply (for example a CLI call that timed out) is not "done": ask once more before accepting it.
@@ -742,16 +769,35 @@ export class Orchestrator {
           text = 'Completed (the agent returned no written report).'
         }
         if (response.stopReason === 'max_tokens') text += '\n\n[The answer was cut off: the model hit its output token limit.]'
+        if (lastRound && response.toolCalls.length > 0) throw new ToolRoundsExhausted(`The agent did not finish within ${maxRounds} tool rounds. It was not run again, because a rerun from scratch would spend the same again: resume the run, or split the task into smaller ones.`)
+        if (lastRound) text += `\n\n[Incomplete: the agent used its ${maxRounds} tool rounds and had to write this report without further tool use. Treat anything it did not verify as not done.]`
         return clip(text, MAX_RESULT_CHARS)
       }
       usedTools = true
       messages.push({ role: 'assistant', content: [...(response.text.trim() ? [{ type: 'text' as const, text: response.text }] : []), ...response.toolCalls.map(toCallPart)] })
       const results: ToolResultPart[] = []
-      for (const call of response.toolCalls) results.push(await this.runTool(call, available, ctx, log))
+      const pictures: ImagePart[] = []
+      for (const call of response.toolCalls) results.push(await this.runTool(call, available, ctx, log, pictures))
       if (step?.mustCall?.satisfied()) return clip(response.text.trim() || 'Submitted.', MAX_RESULT_CHARS)
-      messages.push({ role: 'user', content: results })
+      // Close to the limit, say so: an agent that knows it is nearly out of rounds writes its report instead of exploring.
+      const left = maxRounds - round
+      const nudge: ContentPart[] =
+        !step?.mustCall && left <= 2
+          ? [{ type: 'text', text: left === 1 ? 'This was your second-to-last round. Your next reply must be your final written report: you will have no tools. Say plainly what you finished and what you did not.' : 'You have 2 tool rounds left, then no more tools. Stop exploring: finish only what is essential, then write the final report.' }]
+          : []
+      messages.push({ role: 'user', content: [...results, ...pictures, ...nudge] })
+      dropOldImages(messages)
+      // The whole conversation is sent again every round: shorten the old tool results so the cost does not grow with the square of the length.
+      trimOldToolResults(messages)
     }
-    throw new Error(`The agent did not finish within ${MAX_TOOL_ROUNDS} tool rounds.`)
+    throw new ToolRoundsExhausted(`The agent did not finish within ${maxRounds} tool rounds.`)
+  }
+
+  /** Whether this agent's model takes pictures. Only providers whose models are known to are used; a text-only model would reject the request. */
+  private canSeeImages(agent: Agent): boolean {
+    if (!agent.connectionId) return false
+    const kind = this.db.get<{ kind: string }>(`SELECT kind FROM provider_connections WHERE id = ?`, agent.connectionId)?.kind
+    return kind === 'anthropic' || kind === 'claude-code' || kind === 'gemini' || kind === 'openai'
   }
 
   private assets(): AssetService | null {
@@ -813,7 +859,8 @@ export class Orchestrator {
     return text
   }
 
-  private async runTool(call: ToolCall, available: Map<string, AgentTool>, ctx: ToolContext, log: (role: 'tool', content: string) => void): Promise<ToolResultPart> {
+  private async runTool(call: ToolCall, available: Map<string, AgentTool>, baseCtx: ToolContext, log: (role: 'tool', content: string) => void, pictures: ImagePart[] = []): Promise<ToolResultPart> {
+    const ctx: ToolContext = { ...baseCtx, attachImage: (image) => void pictures.push(image) }
     const tool = available.get(call.name)
     let content: string
     let isError = false
@@ -908,7 +955,7 @@ export class Orchestrator {
           throw e
         }
         const message = e instanceof Error ? e.message : String(e)
-        const retryable = !(e instanceof AgentLimitReached) && (!(e instanceof CallFailedError) || e.retryable)
+        const retryable = !(e instanceof AgentLimitReached) && !(e instanceof ToolRoundsExhausted) && !(e instanceof TaskCostCapReached) && (!(e instanceof CallFailedError) || e.retryable)
         const undone = await recovery?.rollback(rt0, message)
         if (retryable && attempt < MAX_ATTEMPTS) {
           this.events.record({ projectId: run.project_id, runId, agentId: agent.id, level: 'warn', type: 'task.retry', message: `“${task.title}” failed (${clip(message, 160)}); retrying` })
@@ -1005,13 +1052,17 @@ export class Orchestrator {
   }
 
   /** Checked before every model call, so a run can overshoot only by the calls already in flight. */
-  private assertLimits(runId: string, agent: Agent): void {
+  private assertLimits(runId: string, agent: Agent, taskId?: string): void {
     const msg = this.budgetMessage(runId)
     this.db.run(`UPDATE runs SET spent_usd = ? WHERE id = ?`, this.spent(runId), runId)
     if (msg) throw new BudgetExceeded(msg)
     if (agent.maxCostUsd !== null) {
       const s = this.db.get<{ s: number }>(`SELECT COALESCE(SUM(cost_usd), 0) s FROM llm_calls WHERE run_id = ? AND agent_id = ?`, runId, agent.id)!.s
       if (s >= agent.maxCostUsd) throw new AgentLimitReached(`Agent “${agent.name}” reached its per-run cost limit of ${usd(agent.maxCostUsd)} (${usd(s)} spent).`)
+    }
+    if (taskId) {
+      const t = this.db.get<{ s: number }>(`SELECT COALESCE(SUM(cost_usd), 0) s FROM llm_calls WHERE task_id = ?`, taskId)!.s
+      if (t >= MAX_TASK_COST_USD) throw new TaskCostCapReached(`This task alone has spent ${usd(t)}, above the ${usd(MAX_TASK_COST_USD)} limit for one task. It was stopped and not retried: split it into smaller tasks or resume the run.`)
     }
   }
 

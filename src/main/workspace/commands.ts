@@ -278,6 +278,10 @@ export class CommandService {
     return this.running.has(id)
   }
 
+  private bypassesApprovals(projectId: string): boolean {
+    return this.db.get<{ b: number }>(`SELECT bypass_approvals b FROM projects WHERE id = ?`, projectId)?.b === 1
+  }
+
   /**
    * Runs the command and resolves with its result. Throws CommandRefusedError when the policy blocks it,
    * the agent may not run commands, or the user denies it. Never throws for a non-zero exit code.
@@ -318,7 +322,12 @@ export class CommandService {
     let decision: CommandLogEntry['decision'] = opts.origin === 'user' ? 'user_approved' : 'auto_allowed'
     let reason = opts.origin === 'user' ? 'Typed by the user.' : verdict.reason
     // Only agents need approval. A person who typed the command in the terminal has already decided.
-    if (verdict.action === 'ask' && opts.origin === 'agent') {
+    const bypass = verdict.action === 'ask' && opts.origin === 'agent' && this.bypassesApprovals(opts.projectId)
+    if (bypass) {
+      // Opt-in per project. Only the "ask the user" step is skipped: blocked commands and agents that may not run commands were refused above.
+      reason = `Bypass approvals is on for this project (${verdict.reason.replace(/^Needs approval: /, '')})`
+      this.events.record({ projectId: opts.projectId, runId: opts.runId ?? null, agentId: agent?.id ?? null, level: 'warn', type: 'command.bypassed', message: `${agent?.name ?? 'An agent'} ran “${opts.command.slice(0, 160)}” without asking (Bypass approvals is on)` })
+    } else if (verdict.action === 'ask' && opts.origin === 'agent') {
       const req = this.approvals.request(
         { projectId: opts.projectId, projectName: opts.projectName, agentId: agent?.id ?? null, agentName: agent?.name ?? null, taskTitle: opts.taskTitle ?? null, command: opts.command, cwd: cwdLabel, reason: verdict.reason },
         { signal: opts.signal, runId: opts.runId ?? null, now: this.now() }
