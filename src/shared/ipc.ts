@@ -491,6 +491,8 @@ export interface StartRunInput {
   maxIterations?: number
   /** How many tasks may run at the same time (1–8, default 3). */
   concurrency?: number
+  /** Development runs only: how many developers may work at the same time (1–8). The user decides this per project. */
+  developers?: number
 }
 
 export interface ResumeRunInput {

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Agent, AssetKind, ResumeRunInput, Run, StartRunInput, TaskStatus } from '../../shared/ipc'
 import { TASK_STATUSES } from '../../shared/ipc'
+import { DEV_ROLES, isDevGoal } from '../../shared/phases'
 import type { AssetService } from '../assets/service'
 import { guessKind } from '../assets/conventions'
 import type { Database } from '../db/database'
@@ -267,19 +268,21 @@ export class Orchestrator {
     const concurrency = input.concurrency === undefined ? DEFAULT_CONCURRENCY : input.concurrency
     if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > MAX_CONCURRENCY) throw new Error(`Concurrency must be between 1 and ${MAX_CONCURRENCY}.`)
     this.pickPm(project.id) // fail now, with a clear reason, if the team cannot plan
+    const developers = this.developersFor(project.id, goal, input.developers)
 
     const id = randomUUID()
     const t = this.now()
     this.db.transaction(() => {
       this.db.run(
         `INSERT INTO runs (id, project_id, goal, mode, status, iteration, max_iterations, budget_usd, spent_usd, concurrency, state_json, started_at, created_at)
-         VALUES (?, ?, ?, 'workflow', 'running', 0, ?, ?, 0, ?, '{}', ?, ?)`,
+         VALUES (?, ?, ?, 'workflow', 'running', 0, ?, ?, 0, ?, ?, ?, ?)`,
         id,
         project.id,
         goal,
         maxIterations,
         budget,
         concurrency,
+        JSON.stringify(developers === null ? {} : { developers }),
         t,
         t
       )
@@ -290,10 +293,27 @@ export class Orchestrator {
       projectId: project.id,
       runId: id,
       type: 'run.started',
-      message: `Run started: ${clip(goal, 120)}${budget === null ? '' : ` · budget ${usd(budget)}`} · up to ${concurrency} in parallel`
+      message: `Run started: ${clip(goal, 120)}${budget === null ? '' : ` · budget ${usd(budget)}`} · up to ${concurrency} in parallel${developers === null ? '' : ` · ${developers} developer${developers === 1 ? '' : 's'}`}`
     })
     this.launch(id)
     return this.getRun(id)!
+  }
+
+  /**
+   * How many developers may work at the same time in a development run: the user's choice for this project, not "as many as exist".
+   * Defaults to one (sequential, no chance of two developers meeting in a file). null for runs that are not development runs.
+   */
+  private developersFor(projectId: string, goal: string, asked: number | undefined): number | null {
+    if (!isDevGoal(goal)) {
+      if (asked !== undefined) throw new Error('The number of developers applies only to development runs.')
+      return null
+    }
+    const n = asked === undefined ? 1 : asked
+    if (!Number.isInteger(n) || n < 1 || n > MAX_CONCURRENCY) throw new Error(`The number of developers must be a whole number between 1 and ${MAX_CONCURRENCY}.`)
+    const available = this.agents.list().filter((a) => a.projectId === projectId && a.enabled && a.issues.length === 0 && DEV_ROLES.includes(a.role)).length
+    if (available === 0) throw new Error('This project has no developer that can run. Add or fix one on the AI Agents page.')
+    if (n > available) throw new Error(`You asked for ${n} developers but only ${available} can run on this project. Add developers first, or choose fewer.`)
+    return n
   }
 
   async stop(runId: string): Promise<Run | null> {
@@ -460,7 +480,8 @@ export class Orchestrator {
       description: list[0].systemPrompt.split('\n')[0].slice(0, 160)
     }))
     const existing = this.db.all<{ title: string }>(`SELECT title FROM tasks WHERE run_id = ?`, run.id).map((r) => r.title)
-    const messages: ChatMessage[] = [{ role: 'user', content: plannerInstructions({ projectName: project.name, projectType: project.type, goal: run.goal, team: members, existing, canPlay: this.workspace !== null && team.some((a) => a.kind !== 'image' && a.permissions.runCommands !== 'none' && a.permissions.writeFiles) }) }]
+    const development = isDevGoal(run.goal)
+    const messages: ChatMessage[] = [{ role: 'user', content: plannerInstructions({ projectName: project.name, projectType: project.type, goal: run.goal, team: members, existing, canPlay: this.workspace !== null && team.some((a) => a.kind !== 'image' && a.permissions.runCommands !== 'none' && a.permissions.writeFiles), development, developerCount: parseState(run.state_json).developers ?? 1 }) }]
     const roles = new Set(byRole.keys())
     const log = (role: 'assistant' | 'user' | 'tool', content: string): void => this.log(run.project_id, run.id, null, pm.id, role, content)
     log('user', messages[0].content as string)
@@ -489,7 +510,7 @@ export class Orchestrator {
           messages.push({ role: 'user', content: 'You must submit the plan by calling the submit_plan tool. Do that now. If you already tried, your reply could not be read as a tool call: send exactly one tool call with valid JSON (every { and [ closed, quotes inside text escaped), and keep each task description short (a few sentences).' })
           continue
         }
-        const verdict = validatePlan(call.arguments, roles)
+        const verdict = validatePlan(call.arguments, roles, { development, developers: parseState(run.state_json).developers ?? 1 })
         if (verdict.ok) {
           this.persistPlan(run, verdict.tasks)
           log('tool', `submit_plan → accepted (${verdict.tasks.length} tasks)`)
@@ -528,7 +549,10 @@ export class Orchestrator {
             projectId: run.project_id,
             runId: run.id,
             title: p.title,
-            description: p.description,
+            description: p.files.length ? `${p.description}
+
+Files this task owns (no other developer edits them at the same time): ${p.files.join(', ')}.
+If you must change any other file, read it first and use edit_file with a small change (never rewrite the whole file): another developer may be working in it.` : p.description,
             role: p.role,
             priority: p.priority,
             dependsOn: p.dependsOn.map((d) => ids.get(d)!)
@@ -547,6 +571,7 @@ export class Orchestrator {
     const run = this.row(runId)
     const running = new Map<string, Promise<void>>()
     const busy = new Set<string>()
+    const state = parseState(run.state_json)
     for (;;) {
       if (signal.aborted) {
         await Promise.allSettled([...running.values()])
@@ -563,7 +588,7 @@ export class Orchestrator {
         const team = this.agents.list().filter((a) => a.projectId === run.project_id)
         for (const task of ready) {
           if (running.size >= run.concurrency) break
-          const pick = this.pickAgent(task, team, busy)
+          const pick = this.pickAgent(task, team, busy, state.developers ?? null)
           if (pick.kind === 'wait') continue
           if (pick.kind === 'error') {
             this.failTask(run, task, pick.message, null)
@@ -618,7 +643,15 @@ export class Orchestrator {
     }
   }
 
-  private pickAgent(task: TaskRow, team: Agent[], busy: Set<string>): Pick {
+  private pickAgent(task: TaskRow, team: Agent[], busy: Set<string>, developers: number | null): Pick {
+    const pick = this.pickAgentFor(task, team, busy)
+    if (pick.kind !== 'agent' || developers === null || !DEV_ROLES.includes(pick.agent.role)) return pick
+    // The user fixed how many developers work at once: a further feature waits for one of them to finish.
+    const working = team.filter((a) => busy.has(a.id) && DEV_ROLES.includes(a.role)).length
+    return working >= developers ? { kind: 'wait' } : pick
+  }
+
+  private pickAgentFor(task: TaskRow, team: Agent[], busy: Set<string>): Pick {
     if (task.assigned_agent_id) {
       const a = team.find((x) => x.id === task.assigned_agent_id)
       if (!a) return { kind: 'error', message: 'The assigned agent no longer exists on this project’s team.' }
@@ -1101,10 +1134,17 @@ export class Orchestrator {
 
 const toCallPart = (c: ToolCall): ContentPart => ({ type: 'tool_call', ...c })
 
-function parseState(json: string): { planned?: boolean; workflow?: boolean } {
+interface RunState {
+  planned?: boolean
+  workflow?: boolean
+  /** Development runs: how many developers may work at the same time. */
+  developers?: number
+}
+
+function parseState(json: string): RunState {
   try {
     const v = JSON.parse(json) as unknown
-    return typeof v === 'object' && v !== null ? (v as { planned?: boolean; workflow?: boolean }) : {}
+    return typeof v === 'object' && v !== null ? (v as RunState) : {}
   } catch {
     return {}
   }

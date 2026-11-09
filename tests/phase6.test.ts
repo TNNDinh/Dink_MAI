@@ -786,6 +786,7 @@ describe('WorkspaceService', () => {
       expect(await code(ws.rename('p1', 'src/a.ts', 'src/z.ts'))).toBe('locked')
       expect(await code(ws.remove('p1', 'src'))).toBe('locked')
       const other = hire('frontend_developer', { name: 'Second dev' })
+      ws.lockWaitMs = 0 // this test is about the refusal itself; waiting for the file is covered in dev-conflicts.test.ts
       await expect(ws.agentWrite('p1', 'src/a.ts', 'v2', actor(other as never, makeTask('Other')))).rejects.toThrow(FileLockedError)
       expect(readFileSync(join(root, 'src/a.ts'), 'utf8')).toBe('v1')
       // The same agent may keep writing; other files are free.
@@ -943,6 +944,7 @@ describe('workspace tools', () => {
   })
 
   it('a locked file is reported to the agent as an error it can act on', async () => {
+    ws.lockWaitMs = 0 // no waiting here; see dev-conflicts.test.ts for the waiting behaviour
     await call('write_file', { path: 'shared.ts', content: 'a' })
     const rival = { ...ctxFor('lead_developer'), agent: { ...agentByRole('lead_developer'), id: hire('frontend_developer').id } }
     await expect(tool('write_file').execute(rival, { path: 'shared.ts', content: 'b' })).rejects.toThrow(/locked by/)

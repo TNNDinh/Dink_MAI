@@ -1,4 +1,5 @@
 import type { Agent, DirListing, FileContent, FileLockInfo, FsChange, IndexSummary, ContextMatch, SearchResult, WriteFileInput, WriteFileResult } from '../../shared/ipc'
+import { LOCK_WAIT_MS } from '../../shared/phases'
 import type { Database } from '../db/database'
 import type { EventService } from '../services/events'
 import { ContextIndexer } from './indexer'
@@ -18,6 +19,8 @@ export interface Actor {
   agent: Agent
   runId: string
   taskId: string
+  /** Aborted when the run stops: a developer waiting for a file stops waiting. */
+  signal?: AbortSignal
 }
 
 /**
@@ -30,6 +33,8 @@ const OWN_WINDOW_MS = 2500
 export class WorkspaceService {
   private readonly sandboxes = new Map<string, Sandbox>()
   private readonly changeListeners = new Set<(c: FsChange) => void>()
+  /** How long a developer waits for a file another developer is editing before the write fails (ms). */
+  lockWaitMs = LOCK_WAIT_MS
 
   constructor(
     private readonly db: Database,
@@ -256,16 +261,39 @@ export class WorkspaceService {
     return { ...f, lockedBy: null }
   }
 
+  /**
+   * Takes the file for this agent, waiting when another developer is editing it. Returns true when it had to wait: the file
+   * may then differ from what the agent last read, so callers re-read it (edit_file) or refuse a blind overwrite (write_file).
+   */
+  async agentLock(projectId: string, path: string, actor: Actor): Promise<boolean> {
+    const rel = this.sandbox(projectId).resolve(path).rel
+    return this.locks.acquireWaiting(projectId, rel, actor.agent.id, actor.taskId, {
+      signal: actor.signal,
+      waitMs: this.lockWaitMs,
+      onWait: (h) =>
+        this.events.record({ projectId, runId: actor.runId, agentId: actor.agent.id, level: 'warn', type: 'file.conflict', message: `${actor.agent.name} needs ${rel} but ${h.agentName ?? 'another agent'} is editing it${h.taskTitle ? ` (task “${h.taskTitle}”)` : ''}: waiting for that task to end` })
+    })
+  }
+
   /** Takes the file's lock for the agent's task, then writes. `expectedHash` guards read-modify-write edits. */
   async agentWrite(projectId: string, path: string, content: string, actor: Actor, expectedHash?: string | null): Promise<WriteFileResult> {
     if (!actor.agent.permissions.writeFiles) throw new WorkspaceError('You are not allowed to write files.', 'denied')
     const sb = this.sandbox(projectId)
     const { rel } = sb.resolve(path)
     if (isSecretPath(rel)) throw new WorkspaceError(`“${rel}” may hold credentials, so agents cannot write it.`, 'denied')
-    this.locks.acquire(projectId, rel, actor.agent.id, actor.taskId)
+    const waited = await this.agentLock(projectId, rel, actor)
     const journal = this.journals.get(actor.taskId)
     await journal?.capture(sb, rel)
-    const r = await sb.write(rel, content, { expectedHash })
+    let r: WriteFileResult
+    try {
+      // Someone else held the file while we waited: a whole-file write built from an older read would erase their work.
+      r = await sb.write(rel, content, { expectedHash: waited && expectedHash === undefined ? null : expectedHash })
+    } catch (e) {
+      if (waited && expectedHash === undefined && e instanceof WorkspaceError && e.code === 'exists') {
+        throw new WorkspaceError(`“${rel}” was changed by another developer while you waited for it. Do not overwrite it: read it again and apply only your change with edit_file.`, 'exists')
+      }
+      throw e
+    }
     await journal?.settle(sb, rel, false)
     this.events.record({ projectId, runId: actor.runId, agentId: actor.agent.id, type: 'file.written', message: `${actor.agent.name} ${r.created ? 'created' : 'wrote'} ${r.path} (${r.size} bytes)` })
     this.emit({ projectId, path: r.path, kind: 'write', by: 'agent' })
@@ -276,7 +304,7 @@ export class WorkspaceService {
     if (!actor.agent.permissions.writeFiles) throw new WorkspaceError('You are not allowed to delete files.', 'denied')
     const sb = this.sandbox(projectId)
     const { rel } = sb.resolve(path)
-    this.locks.acquire(projectId, rel, actor.agent.id, actor.taskId)
+    await this.agentLock(projectId, rel, actor)
     const journal = this.journals.get(actor.taskId)
     await journal?.capture(sb, rel)
     const r = await sb.remove(rel, { filesOnly: true })

@@ -17,7 +17,7 @@ const text = (v: unknown, what: string, max = 1000): string => {
 
 const need = (ctx: ToolContext): { ws: WorkspaceService; actor: Actor } => {
   if (!ctx.workspace) throw new Error('The project workspace is not available.')
-  return { ws: ctx.workspace, actor: { agent: ctx.agent, runId: ctx.runId, taskId: ctx.taskId } }
+  return { ws: ctx.workspace, actor: { agent: ctx.agent, runId: ctx.runId, taskId: ctx.taskId, signal: ctx.signal } }
 }
 
 const int = (v: unknown, fallback: number, min: number, max: number): number => (typeof v === 'number' && Number.isFinite(v) ? Math.min(Math.max(Math.trunc(v), min), max) : fallback)
@@ -111,6 +111,8 @@ const editFile: AgentTool = {
     const oldText = text(args.old_text, 'old_text', MAX_WRITE_CHARS)
     if (typeof args.new_text !== 'string') throw new Error('new_text is required (use an empty string to delete the old text).')
     if (oldText === args.new_text) throw new Error('old_text and new_text are identical; nothing to change.')
+    // Take the file BEFORE reading it: if another developer is in it we wait, and then read what they left, not a stale copy.
+    await ws.agentLock(ctx.projectId, path, actor)
     const f = await ws.agentRead(ctx.projectId, path, actor, MAX_READ_BYTES)
     const crlf = f.content.includes('\r\n')
     const body = crlf ? f.content.replace(/\r\n/g, '\n') : f.content

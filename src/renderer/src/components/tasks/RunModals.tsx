@@ -1,6 +1,7 @@
 import { AlertTriangle, Play } from 'lucide-react'
 import { useState } from 'react'
 import type { Project, Run } from '../../../../shared/ipc'
+import { DEV_ROLES, isDevGoal } from '../../../../shared/phases'
 import { useStudio } from '../../store'
 import { fmtUsd } from '../../lib/format'
 import { Button, Field, Input, Modal, Textarea } from '../ui'
@@ -14,7 +15,20 @@ function parseBudget(raw: string): number | null | undefined {
   return Number.isFinite(n) && n > 0 ? n : undefined
 }
 
-export function StartRunModal({ project, onClose, onStarted }: { project: Project; onClose: () => void; onStarted: (run: Run) => void }) {
+export function StartRunModal({
+  project,
+  onClose,
+  onStarted,
+  initialGoal,
+  title
+}: {
+  project: Project
+  onClose: () => void
+  onStarted: (run: Run) => void
+  /** Replaces the project's goal as the starting text (e.g. the development phase). */
+  initialGoal?: string
+  title?: string
+}) {
   const agents = useStudio((s) => s.agents)
   const refresh = useStudio((s) => s.refresh)
   const team = agents.filter((a) => a.projectId === project.id && a.enabled)
@@ -23,10 +37,13 @@ export function StartRunModal({ project, onClose, onStarted }: { project: Projec
   const runnable = team.filter((a) => a.kind === 'chat' && a.issues.length === 0)
   const stuck = team.filter((a) => a.issues.length > 0)
 
-  const [goal, setGoal] = useState(project.goal)
+  const [goal, setGoal] = useState(initialGoal ?? project.goal)
   const [budget, setBudget] = useState(project.budgetUsd === null ? '' : String(project.budgetUsd))
   const [iterations, setIterations] = useState(String(project.maxIterations))
   const [concurrency, setConcurrency] = useState('3')
+  const [developersText, setDevelopersText] = useState('1')
+  const devRun = isDevGoal(goal)
+  const devAvailable = runnable.filter((a) => DEV_ROLES.includes(a.role)).length
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -38,10 +55,12 @@ export function StartRunModal({ project, onClose, onStarted }: { project: Projec
     if (budgetUsd === undefined) return setError('Budget must be a positive amount, or empty for no limit.')
     if (!Number.isInteger(maxIterations) || maxIterations < 0 || maxIterations > 50) return setError('Review rounds must be a whole number from 0 to 50.')
     if (!Number.isInteger(conc) || conc < 1 || conc > 8) return setError('Parallel tasks must be a whole number from 1 to 8.')
+    const developers = Number(developersText)
+    if (devRun && (!Number.isInteger(developers) || developers < 1 || developers > Math.max(devAvailable, 1))) return setError(`Developers must be a whole number from 1 to ${Math.max(devAvailable, 1)} (the developers on this team that can run).`)
     setBusy(true)
     setError(null)
     try {
-      const run = await window.api.invoke('runs:start', { projectId: project.id, goal: goal.trim(), budgetUsd, maxIterations, concurrency: conc })
+      const run = await window.api.invoke('runs:start', { projectId: project.id, goal: goal.trim(), budgetUsd, maxIterations, concurrency: conc, ...(devRun ? { developers } : {}) })
       await refresh()
       onStarted(run)
     } catch (e) {
@@ -52,7 +71,7 @@ export function StartRunModal({ project, onClose, onStarted }: { project: Projec
 
   return (
     <Modal
-      title={`Start a run · ${project.name}`}
+      title={`${title ?? 'Start a run'} · ${project.name}`}
       onClose={onClose}
       footer={
         <>
@@ -88,6 +107,18 @@ export function StartRunModal({ project, onClose, onStarted }: { project: Projec
             <Input value={concurrency} onChange={(e) => setConcurrency(e.target.value)} inputMode="numeric" aria-label="Parallel tasks" />
           </Field>
         </div>
+        {devRun && (
+          <Field
+            label="Developers on this project"
+            hint={
+              devAvailable === 0
+                ? 'No developer can run on this team yet.'
+                : `You decide, 1–${devAvailable} available. 1 = features one after another, no file conflicts. 2 or more = features built at the same time: the planner gives each feature its own files, and a developer who needs a file another one is editing waits for it.`
+            }
+          >
+            <Input value={developersText} onChange={(e) => setDevelopersText(e.target.value)} inputMode="numeric" aria-label="Developers" data-field="developers" className="w-24" />
+          </Field>
+        )}
         <p className="text-[11px] leading-relaxed text-faint">
           {runnable.length} agent{runnable.length === 1 ? '' : 's'} ready
           {stuck.length > 0 && ` · ${stuck.length} need setup (${stuck.map((a) => a.name).join(', ')}) and will fail any task given to them`}. The budget is checked before every model call, so a call already in flight can finish slightly over it. Models without a price can’t be counted against it.

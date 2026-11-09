@@ -32,8 +32,8 @@ describe('validatePlan', () => {
     expect(r).toEqual({
       ok: true,
       tasks: [
-        { key: 'a', title: 'Task a', description: 'do it', role: 'lead_developer', priority: 2, dependsOn: [] },
-        { key: 'b', title: 'Task b', description: 'do it', role: 'qa_tester', priority: 1, dependsOn: ['a'] }
+        { key: 'a', title: 'Task a', description: 'do it', role: 'lead_developer', priority: 2, dependsOn: [], files: [] },
+        { key: 'b', title: 'Task b', description: 'do it', role: 'qa_tester', priority: 1, dependsOn: ['a'], files: [] }
       ]
     })
   })
