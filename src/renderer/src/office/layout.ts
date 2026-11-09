@@ -49,7 +49,7 @@ export interface Desk {
   approach: Tile
 }
 
-export type PropKind = 'plant' | 'cabinet' | 'pm-desk' | 'meeting-table' | 'sofa'
+export type PropKind = 'plant' | 'cabinet' | 'pm-desk' | 'meeting-table' | 'sofa' | 'cooler' | 'vending'
 
 export interface Prop {
   kind: PropKind
@@ -122,6 +122,12 @@ const build = (): Layout => {
   for (let x = 9; x <= 11; x++) seats.push(at(x, 4), at(x, 7))
   seats.push(at(8, 5), at(8, 6), at(12, 5), at(12, 6))
 
+  // the hall: a water cooler, a vending machine or a plant along the front of every room, never on the walking rows
+  const hallKinds: PropKind[] = ['cooler', 'vending', 'plant', 'cooler', 'plant', 'vending', 'cooler']
+  rs.forEach((r, i) => {
+    prop(hallKinds[i], r.x + 2, HALL_Y + HALL_H - 1)
+    if (i % 2 === 0) prop('plant', r.x + 7, HALL_Y + HALL_H - 1)
+  })
   // plants in the hall corners
   prop('plant', w - 1, HALL_Y)
   prop('plant', 0, HALL_Y + HALL_H - 1)

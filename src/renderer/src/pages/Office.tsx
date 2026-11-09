@@ -94,7 +94,9 @@ export function Office(): ReactElement {
       cv.style.height = `${h}px`
       size.current = { w, h }
       if (!fitted.current) {
-        view.current = fitView(w, h)
+        // open on the PM's room, big enough to read the people and the boards; "Fit" shows the whole office
+        const pm = roomOf('pm')
+        view.current = focusView(w, h, Math.min(MAX_SCALE, Math.max(1.4, w / 560)), pm.x + pm.w / 2, pm.h / 2 + 1)
         fitted.current = true
       }
       paint(performance.now())
