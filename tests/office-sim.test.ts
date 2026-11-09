@@ -154,12 +154,12 @@ describe('the people of the office', () => {
     expect(atBoard).toBe(true)
   })
 
-  it('calls a meeting at the table when the run completes', () => {
+  it('calls a meeting at the big table of the hub when the run completes', () => {
     const sim = new OfficeSim()
     sim.sync(office([task({ id: 'a', status: 'done' }), task({ id: 'b', role: 'game_designer', status: 'done' })], { status: 'completed' }))
     sim.event({ type: 'run.completed', message: 'done', agentId: null })
     const L = getLayout()
-    const seats = new Set(L.pm.meetingSeats.map((s) => `${s.x},${s.y}`))
+    const seats = new Set(L.hub.tableSeats.map((s) => `${s.x},${s.y}`))
     let atTable = 0
     play(sim, 90, () => {
       const here = [...sim.actors.values()].filter((a) => !a.next && seats.has(`${a.tile.x},${a.tile.y}`)).length
@@ -167,5 +167,23 @@ describe('the people of the office', () => {
     }, () => !sim.busy())
     expect(atTable).toBe(3)
     expect(seatedAtDesks(sim)).toBe(true)
+  })
+
+  it('shows what happens as effects and derives the state of each person', () => {
+    const sim = new OfficeSim()
+    sim.sync(office([task({ id: 'a', status: 'todo' }), task({ id: 'q', role: 'qa', status: 'todo' })]))
+    expect(sim.stateOf('dev-1')).toBe('waiting')
+    sim.sync(office([task({ id: 'a', status: 'in_progress' }), task({ id: 'q', role: 'qa', status: 'todo' })]))
+    expect(sim.stateOf('dev-1')).toBe('thinking')
+    expect(sim.effects.some((e) => e.kind === 'task-started')).toBe(true)
+    play(sim, 6, () => {})
+    expect(sim.stateOf('dev-1')).toBe('working')
+    sim.sync(office([task({ id: 'a', status: 'failed' }), task({ id: 'q', role: 'qa', status: 'todo' })]))
+    expect(sim.stateOf('dev-1')).toBe('error')
+    expect(sim.effects.some((e) => e.kind === 'bug-found')).toBe(true)
+    sim.event({ type: 'run.completed', message: 'done', agentId: null })
+    expect(sim.effects.some((e) => e.kind === 'release-completed')).toBe(true)
+    play(sim, 8, () => {})
+    expect(sim.effects.some((e) => e.kind === 'task-started')).toBe(false)
   })
 })

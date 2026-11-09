@@ -20,7 +20,15 @@ interface Theme {
   window: WindowStyle
 }
 
-export const THEME: Record<DeptId, Theme> = {
+/** A department, or the hub in the middle of the studio. */
+export type ThemeId = DeptId | 'hub'
+
+/** The accent of the hub: a warm pearl, so it is not mistaken for any department. */
+export const HUB_ACCENT = '#d8d2c4'
+export const accentOf = (id: ThemeId): string => (id === 'hub' ? HUB_ACCENT : DEPT[id].color)
+
+export const THEME: Record<ThemeId, Theme> = {
+  hub: { paint: ['#cdc6b8', '#aea696', '#e1dbcd'], window: 'open' },
   pm: { paint: ['#c79d6b', '#a88053', '#dab784'], window: 'open' },
   gd: { paint: ['#d8cde8', '#b9abd0', '#ebe4f5'], window: 'open' },
   art: { paint: ['#f1d2b6', '#d9b393', '#fbe6d3'], window: 'open' },
@@ -30,9 +38,9 @@ export const THEME: Record<DeptId, Theme> = {
   integration: { paint: ['#8892a3', '#6c7585', '#9ba5b5'], window: 'slats' }
 }
 
-export const wallPalette = (dept: DeptId): Palette => {
+export const wallPalette = (dept: ThemeId): Palette => {
   const [m, n, e] = THEME[dept].paint
-  return { ...BASE, ...accentRamp(DEPT[dept].color), M: m, N: n, E: e }
+  return { ...BASE, ...accentRamp(accentOf(dept)), M: m, N: n, E: e }
 }
 
 const hashPx = (a: number, b: number, c: number): number => {
@@ -44,7 +52,7 @@ const hashPx = (a: number, b: number, c: number): number => {
 // ── elevations ───────────────────────────────────────────────────────────────────────────────────────────────────
 
 /** The inside face of the back wall of a room, `tiles` tiles wide. */
-export function northElevation(dept: DeptId, tiles: number): Elev {
+export function northElevation(dept: ThemeId, tiles: number): Elev {
   const w = tiles * TILE
   const e = new Elev(w, WALL_H)
   const pm = dept === 'pm'
@@ -86,6 +94,9 @@ export function northElevation(dept: DeptId, tiles: number): Elev {
   const win = THEME[dept].window
   if (pm) {
     for (const t of [1, tiles - 2]) drawWindow(e, t * TILE + 2, 19, 12, 21, 'open')
+  } else if (dept === 'hub') {
+    // the two corridors beside the PM room each have a window; the hub's own wall is in the south
+    for (const t of [1, tiles - 3]) drawWindow(e, t * TILE + 2, 19, 28, 21, win)
   } else {
     for (const t of [1, 6]) drawWindow(e, t * TILE + 2, 19, 28, 21, win)
     drawDecor(e, dept, 3 * TILE + 2, 17)
@@ -95,7 +106,7 @@ export function northElevation(dept: DeptId, tiles: number): Elev {
 }
 
 /** A low glass-topped partition, `tiles` tiles long. */
-export function lowElevation(dept: DeptId, tiles: number): Elev {
+export function lowElevation(dept: ThemeId, tiles: number): Elev {
   const w = tiles * TILE
   const e = new Elev(w, LOW_H)
   e.r('l', 0, 0, w, 3)
@@ -125,7 +136,7 @@ export interface TileSprite {
 const cap = { top: 'g', south: 'M', east: 'N', rim: 'w' }
 
 /** Tile k of the back wall of a room (the whole wall is `n` tiles). Anchor: the north corner of the tile (x, 0). */
-export function northTile(dept: DeptId, k: number, elev: Elev): TileSprite {
+export function northTile(dept: ThemeId, k: number, elev: Elev): TileSprite {
   const g = new Grid(36, WALL_H + 22)
   const ay = WALL_H + 3
   isoBox(g, AX, ay, 0, 0.5, 1, 1, 0, WALL_H, cap)
@@ -134,7 +145,7 @@ export function northTile(dept: DeptId, k: number, elev: Elev): TileSprite {
 }
 
 /** Tile k (from the west) of the glass wall on the camera side of a room (y = 10). */
-export function southTile(dept: DeptId, k: number, elev: Elev): TileSprite {
+export function southTile(dept: ThemeId, k: number, elev: Elev): TileSprite {
   const g = new Grid(36, LOW_H + 22)
   const ay = LOW_H + 3
   isoBox(g, AX, ay, 0, 0.5, 1, 1, 0, LOW_H, { top: 'g', south: 'b', east: 'B', rim: 'w' })
@@ -143,7 +154,7 @@ export function southTile(dept: DeptId, k: number, elev: Elev): TileSprite {
 }
 
 /** Tile k counted from the south end of a glass wall between rooms. Faces east (into the room on its east). */
-export function westTile(dept: DeptId, k: number, elev: Elev): TileSprite {
+export function westTile(dept: ThemeId, k: number, elev: Elev): TileSprite {
   const g = new Grid(36, LOW_H + 22)
   const ay = LOW_H + 3
   isoBox(g, AX, ay, 0.5, 0, 1, 1, 0, LOW_H, { top: 'g', south: 'b', east: 'B', rim: 'w' })
@@ -154,13 +165,23 @@ export function westTile(dept: DeptId, k: number, elev: Elev): TileSprite {
 export const DOOR_H = 30
 
 /** A door post on one side of the opening. `side` L stands on the west edge of the first door tile, R on the east edge of the second. */
-export function doorPost(dept: DeptId, side: 'L' | 'R'): TileSprite {
+export function doorPost(dept: ThemeId, side: 'L' | 'R'): TileSprite {
   const g = new Grid(36, DOOR_H + 22)
   const ay = DOOR_H + 3
   const [u0, u1] = side === 'L' ? [0, 0.18] : [0.82, 1]
   isoBox(g, AX, ay, u0, 0.5, u1, 1, 0, DOOR_H, { top: 'A', south: 'a', east: 'b', rim: 'A', edge: 'A', corner: 'B' })
   const [x, y] = IP(AX, ay, side === 'L' ? u0 : u1, 1, DOOR_H)
   g.rect(x - 1, y - 1, 4, 2, 'k')
+  g.outline('k')
+  return { map: g.toMap(AX, ay), pal: wallPalette(dept) }
+}
+
+/** A door post for an opening in a wall that runs along y (the wall's east half is solid). `side` N stands at the first tile, S at the second. */
+export function doorPostV(dept: ThemeId, side: 'N' | 'S'): TileSprite {
+  const g = new Grid(36, DOOR_H + 22)
+  const ay = DOOR_H + 3
+  const [v0, v1] = side === 'N' ? [0, 0.18] : [0.82, 1]
+  isoBox(g, AX, ay, 0.5, v0, 1, v1, 0, DOOR_H, { top: 'A', south: 'a', east: 'b', rim: 'A', edge: 'A', corner: 'B' })
   g.outline('k')
   return { map: g.toMap(AX, ay), pal: wallPalette(dept) }
 }

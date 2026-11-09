@@ -1,6 +1,7 @@
 import { DEPT, type DeptId } from './departments'
 import { HAIR_MAPS, personSprite, type CharPose, type View as CharView } from './assets/characters'
 import { FURNITURE_MAPS, chairBackMap, chairSeatMap, deskMap, pmDeskMap } from './assets/furniture'
+import { STUDIO_MAPS } from './assets/studio'
 import { BASE, accentRamp, type Look } from './assets/palette'
 import { bake, px, type Palette, type PixMap } from './assets/pixmap'
 import type { ScreenState } from './assets/props'
@@ -38,7 +39,7 @@ export const chairSeat = (accent: string): Sprite => lazy(`chair.seat:${accent}`
 export const chairBack = (accent: string): Sprite => lazy(`chair.back:${accent}`, chairBackMap, accent)
 
 /** A piece of furniture from the asset table, in the accent of a department (only some pieces use it). */
-export const furniture = (name: string, accent = '#5b9bf0'): Sprite => lazy(`f:${name}:${accent}`, () => FURNITURE_MAPS[name], accent)
+export const furniture = (name: string, accent = '#5b9bf0'): Sprite => lazy(`f:${name}:${accent}`, () => FURNITURE_MAPS[name] ?? STUDIO_MAPS[name], accent)
 
 // ── small things that are not furniture ──────────────────────────────────────────────────────────────────────────
 

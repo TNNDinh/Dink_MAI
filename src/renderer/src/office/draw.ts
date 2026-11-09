@@ -1,4 +1,5 @@
-import { DEPT } from './departments'
+import { STATE_LOOK, type AgentState } from './blueprint'
+import { DEPT, type DeptId } from './departments'
 import { deskOf, getLayout, type Tile } from './layout'
 import type { Employee } from './model'
 import type { ScreenState } from './assets/props'
@@ -6,9 +7,10 @@ import { drawBoards } from './boards'
 import { glow } from './lighting'
 import { drawOverlay } from './overlay'
 import { hex, type Pt } from './pixels'
+import { panelItems } from './panels'
 import { buildStatics, paintFloor, type Item } from './scene'
 import type { Actor, OfficeSim } from './sim'
-import { PM_LOOK, chairBack, chairSeat, deskSprite, docSprite, lookOf, person, pmDeskSprite, shadowSprite } from './sprites'
+import { PM_LOOK, chairBack, chairSeat, deskSprite, docSprite, furniture, lookOf, person, pmDeskSprite, shadowSprite } from './sprites'
 import { BG, feetOf, toScreen, toWorld, worldInfo, type View } from './world'
 
 /**
@@ -31,19 +33,15 @@ let floorCanvas: HTMLCanvasElement | null = null
 let worldCanvas: HTMLCanvasElement | null = null
 let statics: Item[] | null = null
 
-function screenOf(e: Employee | undefined): ScreenState {
-  if (!e) return 'off'
-  if (e.status === 'working') return 'on'
-  if (e.status === 'failed' || e.status === 'blocked') return 'err'
-  if (e.status === 'in_review' || e.status === 'queued') return 'idle'
-  return 'off'
-}
+/** What a workstation screen shows for the state of the person at it. */
+const screenOf = (state: AgentState): ScreenState => STATE_LOOK[state].screen
 
-function actorItem(a: Actor, emp: Employee | undefined, t: number): Item {
+function actorItem(a: Actor, emp: Employee | undefined, state: AgentState, t: number): Item {
   const [fx, fy] = feetOf(a)
   const pm = a.kind === 'pm'
   const sitting = a.pose === 'sit'
-  const typing = sitting && (pm || emp?.status === 'working')
+  const motion = STATE_LOOK[state].motion
+  const typing = sitting && (motion === 'type' || motion === 'think' || (pm && state === 'working'))
   const frame = a.pose === 'walk' ? Math.floor(a.walkPhase) % 4 : typing ? Math.floor(t * 4 + a.x) % 2 : 0
   const look = pm ? PM_LOOK : lookOf(emp?.look ?? 0)
   return {
@@ -51,12 +49,15 @@ function actorItem(a: Actor, emp: Employee | undefined, t: number): Item {
     o: 3,
     fn: (g) => {
       const s = person(look, a.dept, pm ? 'pm' : 'staff', a.facing, a.pose, frame)
-      const lift = sitting ? SIT_LIFT : 0
+      // a finished task: a small hop; an error: the person shakes
+      const hop = motion === 'hop' && sitting ? Math.round(Math.abs(Math.sin(t * 5)) * 3) : 0
+      const shake = motion === 'shake' && sitting ? (Math.floor(t * 10) % 2 === 0 ? -1 : 1) : 0
+      const lift = (sitting ? SIT_LIFT : 0) + hop
       if (!sitting) {
         const sh = shadowSprite()
         g.drawImage(sh.c, Math.round(fx - sh.ox), Math.round(fy - sh.oy))
       }
-      g.drawImage(s.c, Math.round(fx - s.ox), Math.round(fy - s.oy - lift))
+      g.drawImage(s.c, Math.round(fx - s.ox + shake), Math.round(fy - s.oy - lift))
       if (a.carrying) {
         const d = docSprite()
         const side = a.facing === 'W' ? -6 : a.facing === 'E' ? 6 : a.facing === 'S' ? -5 : 5
@@ -97,12 +98,30 @@ function buildItems(sim: OfficeSim, t: number): Item[] {
     items.push({ d: pmDesk.x + pmDesk.y + (pmDesk.w + pmDesk.h) / 2, o: 1, fn: (g) => g.drawImage(s.c, Math.round(sx - s.ox), Math.round(sy - s.oy)) })
   }
 
+  const put = (s: ReturnType<typeof furniture>, x: number, y: number, d: number, o: number): void => {
+    const [sx, sy] = toWorld(x, y)
+    items.push({ d, o, fn: (g) => g.drawImage(s.c, Math.round(sx - s.ox), Math.round(sy - s.oy)) })
+  }
+  const activeIn = (dept: DeptId): boolean => !!snap && (dept === 'pm' ? snap.pm.runStatus === 'running' : snap.departments[dept].active > 0)
+  for (const p of L.props) {
+    if (p.kind === 'rack') {
+      const blink = activeIn(p.room === 'hub' ? 'pm' : (p.room as DeptId)) && Math.floor(t * 2 + p.x) % 2 === 0
+      put(furniture(blink ? 'rack.b' : 'rack'), p.x, p.y, p.x + p.y + 1, 1)
+    } else if (p.kind === 'station' && p.content) {
+      const dept = p.content as DeptId
+      const desk = deskSprite(dept, activeIn(dept) ? 'on' : 'idle', Math.floor(t * 3 + p.x) % 3)
+      put(desk, p.x, p.y, p.x + p.y + 1, 1)
+    }
+  }
+
   const byId = new Map<string, Employee>()
   if (snap) {
+    items.push(...panelItems(snap, t))
     for (const e of snap.employees) {
       byId.set(e.id, e)
       const d = deskOf(e.department, e.deskIndex)
-      const state = screenOf(e)
+      const agent = sim.stateOf(e.id)
+      const state = screenOf(agent)
       const accent = DEPT[e.department].color
       const desk = deskSprite(e.department, state, state === 'on' ? (frame + e.deskIndex) % 3 : 0)
       const seat = chairSeat(accent)
@@ -132,7 +151,7 @@ function buildItems(sim: OfficeSim, t: number): Item[] {
       })
     }
   }
-  for (const a of sim.ordered()) items.push(actorItem(a, byId.get(a.id), t))
+  for (const a of sim.ordered()) items.push(actorItem(a, byId.get(a.id), sim.stateOf(a.id), t))
   items.sort((p, q) => p.d - q.d || p.o - q.o)
   return items
 }

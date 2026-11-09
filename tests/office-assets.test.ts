@@ -5,6 +5,7 @@ import { BASE, accentRamp, type Look } from '../src/renderer/src/office/assets/p
 import { CHARACTER_MAPS, OUTFIT_MAPS, personMap, type View } from '../src/renderer/src/office/assets/characters'
 import { mapSize, unknownChars, type PixMap } from '../src/renderer/src/office/assets/pixmap'
 import { FURNITURE_MAPS } from '../src/renderer/src/office/assets/furniture'
+import { STUDIO_MAPS } from '../src/renderer/src/office/assets/studio'
 import { FLOOR_PAL, floorPatch, type FloorKind } from '../src/renderer/src/office/assets/floors'
 import { LOW_H, WALL_H, doorPost, lowElevation, northElevation, northTile, southTile, westTile } from '../src/renderer/src/office/assets/walls'
 import { mergeLayers, type Layer } from '../src/renderer/src/office/assets/pixmap'
@@ -74,9 +75,18 @@ describe('office furniture sprites', () => {
     }
   })
 
+  it('every studio piece (racks, console, booth, speakers, easel, bench, storage, round table) is a clean pixel map', () => {
+    expect(Object.keys(STUDIO_MAPS).sort()).toEqual(['booth', 'console', 'easel', 'rack', 'rack.b', 'round-table', 'speaker', 'storage', 'testbench'])
+    for (const [name, m] of Object.entries(STUDIO_MAPS)) {
+      const w = mapSize(m).w
+      expect(m.rows.every((r) => r.length === w), `${name}: rows have different widths`).toBe(true)
+      expect(unknownChars(m, FULL), `${name}: characters missing in the palette`).toEqual([])
+    }
+  })
+
   it.skipIf(!out)('dumps a contact sheet of the furniture', () => {
     const accents: Record<string, string> = { pm: '#e0b341', gd: '#a66be6', art: '#ee8a4c', audio: '#3cc4b5', dev: '#5b9bf0', qa: '#e5675d', integration: '#9aa4b2' }
-    const items: SheetItem[] = Object.entries(FURNITURE_MAPS).map(([name, map]) => {
+    const items: SheetItem[] = Object.entries({ ...FURNITURE_MAPS, ...STUDIO_MAPS }).map(([name, map]) => {
       const dept = name.split('.')[1]
       return { name, map, pal: { ...FULL, ...accentRamp(accents[dept] ?? '#5b9bf0') } }
     })

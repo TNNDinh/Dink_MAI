@@ -1,5 +1,6 @@
 import type { DeptId } from './departments'
-import { deskOf, findPath, getLayout, roomOf, visitSpot, walkGrid, type Tile } from './layout'
+import { EFFECT_LOOK, type AgentState, type EffectKind } from './blueprint'
+import { deskOf, findPath, getLayout, roomAt, visitSpot, walkGrid, type Tile } from './layout'
 import type { Employee, OfficeSnapshot, OfficeTask } from './model'
 
 /** Grid directions: N is −y, S is +y, E is +x, W is −x (on screen: up-right, down-left, down-right, up-left). */
@@ -53,6 +54,23 @@ export interface Actor {
   home: Tile
   /** Not drawn before this time (a new hire is still outside). */
   hiddenUntil: number
+  /** Until when the person is talking with somebody (COLLABORATING) or has just picked up a task (THINKING). */
+  collabUntil: number
+  thinkUntil: number
+  /** The room the person is in now, to notice when they move between departments. */
+  room: string | null
+}
+
+/** Something that just happened in the studio, shown for a moment over the place where it happened. */
+export interface Effect {
+  id: number
+  kind: EffectKind
+  /** Tile-centre position in the world. */
+  x: number
+  y: number
+  at: number
+  until: number
+  text: string
 }
 
 export interface SimEvent {
@@ -92,7 +110,10 @@ const mulberry = (seed: number) => () => {
  */
 export class OfficeSim {
   readonly actors = new Map<string, Actor>()
+  effects: Effect[] = []
   t = 0
+  private fxSeq = 0
+  private pmThinkUntil = 0
   private snap: OfficeSnapshot | null = null
   private prevStatus = new Map<string, string>()
   private grid: Uint8Array
@@ -149,6 +170,7 @@ export class OfficeSim {
       const task = snap.tasks.find((t) => t.taskId === e.assignedTaskId)
       a.pose = 'walk'
       a.steps.push({ k: 'bubble', text: `New task: ${clip(task?.title ?? '', 28)}`, t: 4 }, { k: 'goto', to: chair }, { k: 'sit' })
+      this.fx('agent-assigned', L.entrance, `${e.department.toUpperCase()} · ${e.name}`)
       hired.set(e.department, (hired.get(e.department) ?? 0) + 1)
     }
     for (const id of [...this.actors.keys()]) {
@@ -185,6 +207,7 @@ export class OfficeSim {
     }
     switch (e.type) {
       case 'plan.started':
+        this.pmThinkUntil = this.t + 8
         this.queuePm([{ k: 'goto', to: L.pm.projectBoard }, { k: 'face', at: { x: L.pm.projectBoard.x, y: 0 } }, { k: 'say', text: 'Planning the project…', t: 5 }])
         break
       case 'plan.created':
@@ -207,6 +230,7 @@ export class OfficeSim {
         break
       }
       case 'run.completed':
+        this.fx('release-completed', L.hub.centre)
         this.queuePm([{ k: 'dyn', fn: (sim) => sim.meeting() }])
         break
       case 'run.failed':
@@ -223,7 +247,9 @@ export class OfficeSim {
       if (a.bubble && a.bubble.until <= this.t) a.bubble = null
       if (a.hiddenUntil > this.t) continue
       this.stepActor(a, dt)
+      this.trackRoom(a)
     }
+    if (this.effects.length > 0) this.effects = this.effects.filter((e) => e.until > this.t)
     this.idleBehaviour(dt)
   }
 
@@ -232,7 +258,8 @@ export class OfficeSim {
     const dept: DeptId = kind === 'pm' ? 'pm' : (id.split('-')[0] as DeptId)
     const a: Actor = {
       id, kind, dept, tile: { ...at }, next: null, prog: 0, x: at.x, y: at.y, facing, pose: same(at, home) ? 'sit' : 'stand', walkPhase: 0,
-      carrying: false, bubble: null, label: null, steps: [], path: [], goal: null, blocked: 0, home, hiddenUntil
+      carrying: false, bubble: null, label: null, steps: [], path: [], goal: null, blocked: 0, home, hiddenUntil,
+      collabUntil: 0, thinkUntil: 0, room: roomAt(at.x, at.y)
     }
     this.actors.set(id, a)
     this.occ.set(key(at), id)
@@ -241,6 +268,57 @@ export class OfficeSim {
 
   private shout(a: Actor, text: string, secs: number): void {
     a.bubble = { text, until: this.t + secs }
+  }
+
+  /** Shows what just happened at a tile. The same kind at the same place is not stacked. */
+  fx(kind: EffectKind, at: { x: number; y: number }, text?: string): void {
+    const look = EFFECT_LOOK[kind]
+    const x = Math.floor(at.x) + 0.5
+    const y = Math.floor(at.y) + 0.5
+    this.effects = this.effects.filter((e) => !(e.kind === kind && e.x === x && e.y === y))
+    this.effects.push({ id: ++this.fxSeq, kind, x, y, at: this.t, until: this.t + look.seconds, text: text ?? look.label })
+    if (this.effects.length > 24) this.effects.shift()
+  }
+
+  /** Notices when somebody walks into a department that is not their own. */
+  private trackRoom(a: Actor): void {
+    const r = roomAt(Math.round(a.x), Math.round(a.y))
+    if (r === a.room) return
+    a.room = r
+    if (r && r !== 'hub' && r !== a.dept && a.kind === 'employee') this.fx('agent-moved', a.tile, `-> ${r.toUpperCase()}`)
+  }
+
+  private collab(a: Actor, secs: number): void {
+    a.collabUntil = Math.max(a.collabUntil, this.t + secs)
+  }
+
+  /** The state of a person, for the marker over their head and the screen of their workstation. */
+  stateOf(id: string): AgentState {
+    const a = this.actors.get(id)
+    const snap = this.snap
+    if (!a || !snap) return 'idle'
+    if (a.kind === 'pm') {
+      if (this.t < this.pmThinkUntil) return 'thinking'
+      if (a.collabUntil > this.t) return 'collaborating'
+      return snap.pm.runStatus === 'running' ? 'working' : snap.pm.runStatus === 'failed' ? 'error' : snap.pm.runStatus === 'completed' ? 'completed' : 'idle'
+    }
+    const e = snap.employees.find((x) => x.id === id)
+    if (!e) return 'idle'
+    switch (e.status) {
+      case 'failed':
+        return 'error'
+      case 'blocked':
+        return 'blocked'
+      case 'done':
+        return 'completed'
+      case 'queued':
+      case 'waiting':
+      case 'in_review':
+        return a.collabUntil > this.t ? 'collaborating' : 'waiting'
+      default:
+        if (a.collabUntil > this.t) return 'collaborating'
+        return a.thinkUntil > this.t ? 'thinking' : 'working'
+    }
   }
 
   private queuePm(steps: Step[]): void {
@@ -254,6 +332,8 @@ export class OfficeSim {
     switch (task.status) {
       case 'in_progress':
         this.shout(a, `Starting: ${clip(task.title, 26)}`, 3.5)
+        a.thinkUntil = this.t + 4
+        this.fx(task.department === 'integration' ? 'build-started' : 'task-started', a.tile)
         break
       case 'review':
       case 'testing':
@@ -261,12 +341,14 @@ export class OfficeSim {
         break
       case 'failed':
         this.shout(a, `✖ ${clip(task.title, 24)} failed`, 5)
+        this.fx(task.department === 'qa' ? 'test-failed' : 'bug-found', a.tile)
         break
       case 'blocked':
         this.shout(a, 'Blocked by an earlier task', 4)
         break
       case 'done':
         a.label = null
+        this.fx(task.department === 'integration' ? 'build-completed' : 'task-completed', a.tile)
         this.deliver(a, emp, task)
         break
     }
@@ -336,6 +418,7 @@ export class OfficeSim {
         { k: 'goto', to: d.approach },
         { k: 'face', at: d.chair },
         { k: 'say', text: target.department === emp?.department ? 'Here is my part' : `Here is the ${emp ? emp.department.toUpperCase() : ''} output`, t: 1.6 },
+        { k: 'dyn', fn: (sim) => (sim.fx('collaboration', d.chair), []) },
         { k: 'sayTo', id, text: 'Thanks — got it', t: 2 },
         { k: 'wait', t: 0.8 }
       )
@@ -359,6 +442,8 @@ export class OfficeSim {
     const d = deskOf(target.department, target.deskIndex)
     const home = deskOf(snap.employees.find((e) => e.id === a.id)?.department ?? 'qa', snap.employees.find((e) => e.id === a.id)?.deskIndex ?? 0).chair
     other.label = 'Fixing what the tester found'
+    this.fx('bug-found', other.tile)
+    this.fx('collaboration', d.approach)
     a.steps.push(
       { k: 'bubble', text: 'Found problems…', t: 2 },
       { k: 'goto', to: d.approach },
@@ -395,8 +480,8 @@ export class OfficeSim {
       seenDept.add(e.department)
       picks.push(e)
     }
-    const seats = L.pm.meetingSeats
-    const centre: Tile = { x: roomOf('pm').x + 10, y: 5.5 }
+    const seats = L.hub.tableSeats
+    const centre: Tile = L.hub.centre
     const id = ++this.seq
     const who = picks.slice(0, seats.length - 1)
     who.forEach((e, i) => {
@@ -497,6 +582,7 @@ export class OfficeSim {
       { k: 'goto', to: d.approach },
       { k: 'face', at: d.chair },
       { k: 'say', text: 'Let us line up our parts', t: 2.2 },
+      { k: 'dyn', fn: (sim) => (sim.fx('collaboration', d.chair), []) },
       { k: 'sayTo', id: you.id, text: 'Sure, one moment', t: 2.2 },
       { k: 'wait', t: 1 },
       { k: 'goto', to: home },
@@ -551,6 +637,7 @@ export class OfficeSim {
         if (s.until === undefined) {
           s.until = this.t + s.t
           a.bubble = { text: s.text, until: s.until }
+          if (!same(a.tile, a.home)) this.collab(a, s.t + 0.6)
         }
         a.pose = a.pose === 'walk' ? 'stand' : a.pose
         return this.t >= s.until
@@ -559,7 +646,10 @@ export class OfficeSim {
         return true
       case 'sayTo': {
         const o = this.actors.get(s.id)
-        if (o) o.bubble = { text: s.text, until: this.t + s.t }
+        if (o) {
+          o.bubble = { text: s.text, until: this.t + s.t }
+          this.collab(o, s.t + 0.6)
+        }
         return true
       }
       case 'carry':

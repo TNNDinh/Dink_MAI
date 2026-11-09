@@ -1,9 +1,10 @@
+import { EFFECT_LOOK, STATE_LOOK, type AgentState, type Glyph } from './blueprint'
 import { DEPT } from './departments'
 import { getLayout } from './layout'
 import type { Employee, EmployeeStatus } from './model'
 import { hex, shade, type Pt } from './pixels'
 import type { Actor, OfficeSim } from './sim'
-import { WALL_H } from './assets/walls'
+import { DOOR_H, LOW_H, WALL_H } from './assets/walls'
 import { feetOf, toScreen, toWorld, type View } from './world'
 
 /**
@@ -27,6 +28,8 @@ export const statusColor = (s: EmployeeStatus): string => STATUS_COLOR[s]
 export interface OverlayOpts {
   selected: string | null
   hovered: string | null
+  /** Seconds, for the animated markers. */
+  time: number
 }
 
 type Ctx = CanvasRenderingContext2D
@@ -158,9 +161,30 @@ function tag(g: Ctx, ui: number, x: number, y: number, text: string, dot: string
   }
 }
 
+/** A 5 × 5 pixel glyph for a state, drawn inside a box of `u` px per art pixel. */
+const GLYPH: Record<Glyph, string[]> = {
+  dash: ['.....', '.....', '#####', '.....', '.....'],
+  gear: ['.#.#.', '#####', '##.##', '#####', '.#.#.'],
+  dots: ['.....', '.....', '#.#.#', '.....', '.....'],
+  link: ['.....', '##.##', '#####', '##.##', '.....'],
+  hourglass: ['#####', '.###.', '..#..', '.###.', '#####'],
+  bang: ['..#..', '..#..', '..#..', '.....', '..#..'],
+  check: ['.....', '....#', '#..#.', '.##..', '..#..'],
+  cross: ['#...#', '.#.#.', '..#..', '.#.#.', '#...#']
+}
+
+function glyph(g: Ctx, kind: Glyph, x: number, y: number, size: number, color: string): void {
+  const u = Math.max(1, Math.floor(size / 5))
+  g.fillStyle = color
+  GLYPH[kind].forEach((row, j) => {
+    for (let i = 0; i < 5; i++) if (row[i] === '#') g.fillRect(x + i * u, y + j * u, u, u)
+  })
+}
+
 /** A small status marker over a person whose task plate is not shown (idle people, or when the screen is crowded). */
-function pip(g: Ctx, ui: number, x: number, y: number, dot: string, prio: number): Label {
-  const w = Math.round(9 * ui)
+function pip(g: Ctx, ui: number, x: number, y: number, state: AgentState, t: number, prio: number): Label {
+  const look = STATE_LOOK[state]
+  const w = Math.round(13 * ui)
   return {
     prio,
     x,
@@ -169,10 +193,18 @@ function pip(g: Ctx, ui: number, x: number, y: number, dot: string, prio: number
     h: w,
     fixed: true,
     draw: (r) => {
-      plate(g, r, 'rgba(24,20,42,0.94)', shade(dot, 0.7))
-      const d = Math.max(3, Math.round(r.w / 2.2))
-      g.fillStyle = dot
-      g.fillRect(r.x + Math.round((r.w - d) / 2), r.y + Math.round((r.h - d) / 2), d, d)
+      plate(g, r, 'rgba(24,20,42,0.94)', shade(look.color, 0.7))
+      const u = Math.max(1, Math.floor((r.w - 4) / 5))
+      // THINKING: three dots that light one after the other
+      if (state === 'thinking') {
+        const on = Math.floor(t * 3) % 3
+        for (let i = 0; i < 3; i++) {
+          g.fillStyle = i === on ? look.color : shade(look.color, 0.5)
+          g.fillRect(r.x + 2 + i * (u + 1) * 1.5, r.y + Math.round(r.h / 2) - 1, Math.max(2, u), Math.max(2, u))
+        }
+        return
+      }
+      glyph(g, look.glyph, r.x + Math.round((r.w - u * 5) / 2), r.y + Math.round((r.h - u * 5) / 2), u * 5, look.color)
     }
   }
 }
@@ -216,14 +248,20 @@ export function drawOverlay(g: Ctx, sim: OfficeSim, view: View, opts: OverlayOpt
   g.save()
   g.imageSmoothingEnabled = false
 
-  // department signs above the back walls
+  // department signs: above the tall back wall on the top row, on the glass wall that closes the room in the north elsewhere
   for (const r of L.rooms) {
     const d = DEPT[r.dept]
-    const [wx, wy] = toWorld(r.x + r.w / 2, 1)
-    const [sx, sy] = toScreen(view, wx, wy - WALL_H - 5)
+    const [wx, wy] = toWorld(r.x + r.w / 2, r.y + (r.y === 0 ? 1 : 0.5))
+    const [sx, sy] = toScreen(view, wx, wy - (r.y === 0 ? WALL_H + 5 : LOW_H + 9))
     const n = snap ? (r.dept === 'pm' ? 1 : snap.departments[r.dept].employees) : 0
     const over = snap && r.dept !== 'pm' ? snap.departments[r.dept].overflow : 0
     sign(g, ui, sx, sy, r.dept === 'pm' ? d.short : `${d.short} · ${n}${over > 0 ? ` +${over}` : ''}`, d.color)
+  }
+  // the hub: a sign over the entrance
+  {
+    const [wx, wy] = toWorld(L.entrance.x + 1, L.entrance.y + 0.5)
+    const [sx, sy] = toScreen(view, wx, wy - DOOR_H - 10)
+    sign(g, ui, sx, sy, 'HUB · COLLABORATION', '#d8d2c4')
   }
   if (!snap) {
     g.restore()
@@ -252,18 +290,40 @@ export function drawOverlay(g: Ctx, sim: OfficeSim, view: View, opts: OverlayOpt
       g.ellipse(Math.round(sx), Math.round(sy), 11 * view.scale, 5.5 * view.scale, 0, 0, Math.PI * 2)
       g.stroke()
     }
-    const color = a.kind === 'pm' ? '#e0b341' : emp ? STATUS_COLOR[emp.status] : '#9aa4b2'
+    const state = sim.stateOf(a.id)
+    const color = STATE_LOOK[state].color
     if (a.bubble) {
       labels.push(speech(g, ui, hx, hy, a.bubble.text, 3))
     } else if (detail && !hot && a.kind !== 'pm' && (!plates || !emp || !ACTIVE.has(emp.status))) {
-      labels.push(pip(g, ui, hx, hy, color, 0))
+      labels.push(pip(g, ui, hx, hy, state, opts.time, 0))
     } else if (detail || hot || a.kind === 'pm') {
       const task = emp ? tasks.get(emp.assignedTaskId ?? '') : undefined
-      const text = a.kind === 'pm' ? `PM · ${snap.pm.name}` : a.label ?? (task ? task.title : emp?.currentActivity ?? '')
+      const text = a.kind === 'pm' ? `PM · ${snap.pm.name}` : `${STATE_LOOK[state].label} · ${a.label ?? (task ? task.title : emp?.currentActivity ?? '')}`
       const progress = detail && emp && emp.progress !== null && a.kind !== 'pm' ? emp.progress : null
       labels.push(tag(g, ui, hx, hy, text, color, progress, selected ? 2 : hot ? 2 : a.kind === 'pm' ? 1 : 0))
     }
     if ((names || hot) && emp) nameplate(g, ui, sx, sy + 3, emp.name)
+  }
+
+  // what just happened: a marker that rises over the place and fades
+  for (const e of sim.effects) {
+    const look = EFFECT_LOOK[e.kind]
+    const age = (sim.t - e.at) / look.seconds
+    if (age < 0 || age > 1) continue
+    const [wx, wy] = toWorld(e.x, e.y)
+    const [sx, sy] = toScreen(view, wx, wy - 40 - age * 10)
+    g.globalAlpha = age > 0.75 ? (1 - age) * 4 : 1
+    g.font = font(ui * 0.95, 700)
+    const w = Math.round(g.measureText(e.text).width + 12 * ui + 14)
+    const h = Math.round(16 * ui)
+    const r: Rect = { x: Math.round(sx - w / 2), y: Math.round(sy - h), w, h }
+    plate(g, r, shade(look.color, 0.35), look.color)
+    glyph(g, look.glyph, r.x + 4, r.y + Math.round((h - 5 * Math.max(1, Math.floor(h / 8))) / 2), 5 * Math.max(1, Math.floor(h / 8)), '#ffffff')
+    g.fillStyle = '#ffffff'
+    g.textAlign = 'left'
+    g.textBaseline = 'middle'
+    g.fillText(e.text, r.x + 10 + 5 * Math.max(1, Math.floor(h / 8)), r.y + h / 2 + 0.5)
+    g.globalAlpha = 1
   }
 
   // place the plates: speech bubbles stay where they are, the others move up until they clear what is already placed

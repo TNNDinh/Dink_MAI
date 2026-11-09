@@ -4,7 +4,7 @@ import { useStudio } from '../store'
 import { Badge, Button, Select } from '../components/ui'
 import { DEPARTMENTS, DEPT, type DeptId } from '../office/departments'
 import { buildOffice, type Employee, type EmployeeStatus } from '../office/model'
-import { roomOf } from '../office/layout'
+import { getLayout, roomOf } from '../office/layout'
 import { OfficeSim } from '../office/sim'
 import { MAX_SCALE, MIN_SCALE, actorScreen, fitView, focusView, renderOffice, statusColor, type View } from '../office/draw'
 
@@ -96,7 +96,7 @@ export function Office(): ReactElement {
       if (!fitted.current) {
         // open on the PM's room, big enough to read the people and the boards; "Fit" shows the whole office
         const pm = roomOf('pm')
-        view.current = focusView(w, h, Math.min(MAX_SCALE, Math.max(1.4, w / 560)), pm.x + pm.w / 2, pm.h / 2 + 1)
+        view.current = focusView(w, h, Math.min(MAX_SCALE, Math.max(1.4, w / 560)), pm.x + pm.w / 2, pm.y + pm.h / 2)
         fitted.current = true
       }
       paint(performance.now())
@@ -163,9 +163,12 @@ export function Office(): ReactElement {
     return [e.clientX - rect.left, e.clientY - rect.top]
   }
 
+  const jumpTo = (x: number, y: number): void => {
+    view.current = focusView(size.current.w, size.current.h, Math.min(MAX_SCALE, Math.max(1.4, size.current.w / 560)), x, y)
+  }
   const jump = (dept: DeptId): void => {
     const r = roomOf(dept)
-    view.current = focusView(size.current.w, size.current.h, Math.min(MAX_SCALE, Math.max(1.4, size.current.w / 560)), r.x + r.w / 2, r.h / 2 + 1)
+    jumpTo(r.x + r.w / 2, r.y + r.h / 2)
   }
 
   const zoomBy = (f: number): void => zoomAt(size.current.w / 2, size.current.h / 2, f)
@@ -224,6 +227,15 @@ export function Office(): ReactElement {
             </button>
           )
         })}
+        <button
+          data-dept="hub"
+          onClick={() => jumpTo(getLayout().hub.centre.x, getLayout().hub.centre.y)}
+          title="Hub: the meeting table, the shared dashboards and the entrance"
+          className="flex items-center gap-1.5 rounded-md border border-line px-2 py-0.5 text-[11px] text-muted hover:bg-hover hover:text-fg"
+        >
+          <span className="size-2 rounded-sm" style={{ background: '#d8d2c4' }} />
+          HUB
+        </button>
       </div>
 
       <div className="relative min-h-0 flex-1 bg-[#0d1016]" ref={wrap}>
