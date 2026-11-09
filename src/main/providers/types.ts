@@ -9,7 +9,7 @@ import type { ProviderKind } from '../../shared/ipc'
 export type { ProviderKind }
 
 /** Wire protocol an adapter speaks. Several provider kinds share one protocol. */
-export type ProviderProtocol = 'anthropic' | 'openai-compatible' | 'gemini'
+export type ProviderProtocol = 'anthropic' | 'openai-compatible' | 'gemini' | 'claude-cli'
 
 export interface ConnectionConfig {
   /** Stable id of the connection row in the database. */

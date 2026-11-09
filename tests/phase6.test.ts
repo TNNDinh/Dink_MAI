@@ -850,7 +850,7 @@ describe('workspace tools', () => {
   it('offers file tools only when a workspace exists and the permissions allow', () => {
     const names = (role: string, workspace: boolean) => toolsFor(agentByRole(role), { workspace }).map((t) => t.def.name)
     expect(names('lead_developer', false)).toEqual(['list_tasks', 'list_memory', 'read_memory', 'write_memory'])
-    expect(names('lead_developer', true)).toEqual(['list_tasks', 'list_memory', 'read_memory', 'write_memory', 'list_files', 'read_file', 'search_files', 'find_context', 'write_file', 'edit_file', 'delete_file', 'run_command'])
+    expect(names('lead_developer', true)).toEqual(['list_tasks', 'list_memory', 'read_memory', 'write_memory', 'list_files', 'read_file', 'search_files', 'find_context', 'write_file', 'edit_file', 'delete_file', 'run_command', 'game_init', 'unity_run', 'unity_bridge', 'apk_to_unity', 'search_large_file', 'android_play', 'android_build'])
     // Reviewers can read but not write, and may only run commands after asking.
     expect(names('code_reviewer', true)).toEqual(expect.arrayContaining(['read_file', 'search_files', 'find_context']))
     expect(names('code_reviewer', true)).not.toContain('write_file')

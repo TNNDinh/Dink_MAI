@@ -87,6 +87,17 @@ export const PROVIDER_CATALOG: Record<ProviderKind, ProviderCatalogEntry> = {
     local: true,
     docsUrl: 'https://ollama.com'
   },
+  'claude-code': {
+    kind: 'claude-code',
+    label: 'Claude Code (this PC, no API key)',
+    protocol: 'claude-cli',
+    // The "base URL" field holds the command to run.
+    defaultBaseUrl: 'claude',
+    requiresApiKey: false,
+    imageGeneration: false,
+    local: true,
+    docsUrl: 'https://docs.claude.com/en/docs/claude-code'
+  },
   custom: {
     kind: 'custom',
     label: 'Custom OpenAI-compatible',

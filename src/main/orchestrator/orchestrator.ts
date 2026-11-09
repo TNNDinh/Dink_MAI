@@ -12,6 +12,8 @@ import type { CommandService } from '../workspace/commands'
 import type { WorkspaceService } from '../workspace/workspace'
 import { CallCancelledError, CallFailedError, type LlmGateway } from './gateway'
 import { plannerInstructions, SUBMIT_PLAN_TOOL, validatePlan, type PlanTask, type TeamMember } from './plan'
+import { ensureBridgePackage, INSTALLED_NOTE } from './unity-bridge'
+import { discoverSkills } from './skill-tools'
 import { toolsFor, type AgentTool, type ToolContext } from './tools'
 
 export const MAX_TOOL_ROUNDS = 12
@@ -676,12 +678,25 @@ export class Orchestrator {
     this.events.record({ projectId: run.project_id, runId: run.id, agentId: agent?.id ?? null, level: 'error', type: 'task.failed', message: `“${task.title}” failed: ${clip(message, 300)}` })
   }
 
+  /** In a Unity project that lacks the MCP bridge, put the bundled package in before the agent starts working. */
+  private ensureUnityBridge(run: RunRow, agent: Agent): void {
+    if (!this.workspace || !agent.permissions.writeFiles) return
+    try {
+      const setup = ensureBridgePackage(this.workspace.workspace.sandbox(run.project_id).root)
+      if (setup === 'installed' || setup === 'installed_from_git') this.events.record({ projectId: run.project_id, runId: run.id, agentId: agent.id, type: 'unity.bridge', message: INSTALLED_NOTE[setup] })
+    } catch (e) {
+      this.events.record({ projectId: run.project_id, runId: run.id, agentId: agent.id, level: 'warn', type: 'unity.bridge', message: `Could not install the Unity MCP bridge: ${e instanceof Error ? e.message : String(e)}` })
+    }
+  }
+
   /** The tool loop: the model works, calls tools, and ends with a text report which becomes the task result. */
   private async converse(run: RunRow, task: TaskRow, agent: Agent, signal: AbortSignal, rt: RunRuntime, state: { reworkRequested: boolean }, step?: StepTools & { workflow: true }): Promise<string> {
-    const base = toolsFor(agent, { workspace: this.workspace !== null, assets: this.assets() !== null }).filter((t) => !step || !PLAN_ONLY_TOOLS.has(t.def.name))
+    const base = toolsFor(agent, { workspace: this.workspace !== null, assets: this.assets() !== null, skills: discoverSkills().length > 0 }).filter((t) => !step || !PLAN_ONLY_TOOLS.has(t.def.name))
     const available = new Map<string, AgentTool>([...base, ...(step?.extra ?? [])].map((t) => [t.def.name, t]))
     const toolDefs = [...available.values()].map((t) => t.def)
     let reminders = 0
+    let emptyRetries = 0
+    this.ensureUnityBridge(run, agent)
     const prompt = this.taskPrompt(run, task, agent, step?.context)
     const messages: ChatMessage[] = [{ role: 'user', content: prompt }]
     const log = (role: 'assistant' | 'user' | 'tool', content: string): void => this.log(run.project_id, run.id, task.id, agent.id, role, content)
@@ -716,6 +731,14 @@ export class Orchestrator {
         let text = response.text.trim()
         if (!text) {
           if (!usedTools) throw new Error('The model returned an empty answer.')
+          // An empty reply (for example a CLI call that timed out) is not "done": ask once more before accepting it.
+          if (emptyRetries < 1) {
+            emptyRetries++
+            messages.push({ role: 'assistant', content: '(no answer)' })
+            messages.push({ role: 'user', content: 'Your last reply was empty. Continue the task: call the tools you still need, or write your report now.' })
+            log('user', 'Reminder: the last reply was empty.')
+            continue
+          }
           text = 'Completed (the agent returned no written report).'
         }
         if (response.stopReason === 'max_tokens') text += '\n\n[The answer was cut off: the model hit its output token limit.]'

@@ -9,6 +9,13 @@ import type { CommandService } from '../workspace/commands'
 import type { WorkspaceService } from '../workspace/workspace'
 import { ASSET_TOOLS } from './asset-tools'
 import { WORKSPACE_TOOLS } from './file-tools'
+import { BUILD_TOOLS } from './build-gate'
+import { GAME_INIT_TOOLS } from './game-init'
+import { ANDROID_TOOLS } from './android-tools'
+import { ATU_TOOLS } from './atu-tools'
+import { SKILL_TOOLS } from './skill-tools'
+import { UNITY_BRIDGE_TOOLS } from './unity-bridge'
+import { UNITY_TOOLS } from './unity-tools'
 
 export const MEMORY_KINDS = ['decision', 'design_doc', 'convention', 'summary', 'note'] as const
 export const MAX_MEMORY_CONTENT = 60_000
@@ -222,7 +229,8 @@ const requestChanges: AgentTool = {
 
 export const ALL_TOOLS: AgentTool[] = [listTasks, listMemory, readMemory, writeMemory, createTask, requestChanges]
 
+
 /** Tools this agent may use. File and command tools are only offered when the app has a workspace to act on. */
-export function toolsFor(agent: Agent, opts: { workspace?: boolean; assets?: boolean } = {}): AgentTool[] {
-  return [...ALL_TOOLS, ...(opts.workspace ? WORKSPACE_TOOLS : []), ...(opts.assets ? ASSET_TOOLS : [])].filter((t) => t.allowed(agent))
+export function toolsFor(agent: Agent, opts: { workspace?: boolean; assets?: boolean; skills?: boolean } = {}): AgentTool[] {
+  return [...ALL_TOOLS, ...(opts.skills ? SKILL_TOOLS : []), ...(opts.workspace ? [...WORKSPACE_TOOLS, ...GAME_INIT_TOOLS, ...UNITY_TOOLS, ...UNITY_BRIDGE_TOOLS, ...ATU_TOOLS, ...ANDROID_TOOLS, ...BUILD_TOOLS] : []), ...(opts.assets ? ASSET_TOOLS : [])].filter((t) => t.allowed(agent))
 }

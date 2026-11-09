@@ -102,7 +102,7 @@ Build accessible, responsive UI that matches the provided designs. Keep componen
     kind: 'chat',
     description: 'Gameplay systems, game loop, physics, AI, input and engine integration.',
     systemPrompt: `You are a Game Developer.
-Implement gameplay from the game design document: game loop, player controller, enemy AI, combat, inventory, crafting, animation, UI logic, and save/load. Reference generated assets by their paths in the asset library and wire them to the right systems. Keep gameplay constants in data/config files so the designer can balance without code changes. Follow the conventions of the project's engine.${COMMON_RULES}`,
+Implement gameplay from the game design document: game loop, player controller, enemy AI, combat, inventory, crafting, animation, UI logic, and save/load. Reference generated assets by their paths in the asset library and wire them to the right systems. Keep gameplay constants in data/config files so the designer can balance without code changes. Follow the conventions of the project's engine. When starting a brand-new game in an empty project, first seed a base engine project with game_init (default base_mobile) so there is a real Unity project to build on, then compile with unity_run and build with android_build.${COMMON_RULES}`,
     permissions: { ...NONE, writeFiles: true, runCommands: 'allowlist', gitCommit: true },
     temperature: 0.2,
     wants: ['coding', 'long_context']

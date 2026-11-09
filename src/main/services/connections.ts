@@ -101,6 +101,23 @@ export function validateBaseUrl(raw: string): string {
   return text.replace(/\/+$/, '')
 }
 
+/**
+ * For command-line providers (Claude Code) the "base URL" field holds the program to run, not a web address.
+ * It is started without a shell, but we still refuse anything that looks like several commands.
+ */
+export function validateCommand(raw: string): string {
+  const text = raw.trim()
+  if (!text) throw new Error('Enter the command to run (for example: claude).')
+  if (/[\r\n]/.test(text) || /[|&;<>`$]/.test(text)) throw new Error('The command must be a single program name or path, without shell characters.')
+  return text
+}
+
+/** Validates the base URL (or, for command-line providers, the command) of a connection. */
+export function resolveBaseUrl(entry: { protocol: string; defaultBaseUrl: string }, raw: string | undefined): string {
+  const text = raw?.trim() || entry.defaultBaseUrl || ''
+  return entry.protocol === 'claude-cli' ? validateCommand(text) : validateBaseUrl(text)
+}
+
 export class ConnectionService {
   constructor(
     private readonly db: Database,
@@ -190,7 +207,7 @@ export class ConnectionService {
     const entry = PROVIDER_CATALOG[input.kind]
     if (!entry) throw new Error(`Unknown provider "${String(input.kind)}".`)
     const name = this.cleanName(input.name)
-    const baseUrl = validateBaseUrl(input.baseUrl?.trim() || entry.defaultBaseUrl || '')
+    const baseUrl = resolveBaseUrl(entry, input.baseUrl)
     const apiKey = this.cleanKey(input.apiKey)
     if (entry.requiresApiKey && !apiKey) throw new Error(`${entry.label} requires an API key.`)
 
@@ -234,7 +251,7 @@ export class ConnectionService {
       params.push(this.cleanName(input.name))
     }
     if (input.baseUrl !== undefined) {
-      const url = validateBaseUrl(input.baseUrl.trim() || entry.defaultBaseUrl || '')
+      const url = resolveBaseUrl(entry, input.baseUrl)
       if (url !== row.base_url) credentialsChanged = true
       sets.push('base_url = ?')
       params.push(url)

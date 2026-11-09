@@ -148,7 +148,7 @@ export interface RecentEventsQuery {
 
 // ------------------------------------------------------------------ connections (Phase 3)
 
-export type ProviderKind = 'anthropic' | 'openai' | 'gemini' | 'openrouter' | 'deepseek' | 'groq' | 'ollama' | 'custom'
+export type ProviderKind = 'anthropic' | 'openai' | 'gemini' | 'openrouter' | 'deepseek' | 'groq' | 'ollama' | 'claude-code' | 'custom'
 
 /** Static description of a provider, used to render the "Add connection" form. */
 export interface ProviderCatalogItem {

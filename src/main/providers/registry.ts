@@ -1,4 +1,5 @@
 import { AnthropicProvider } from './anthropic'
+import { ClaudeCodeProvider } from './claude-code'
 import { PROVIDER_CATALOG } from './catalog'
 import { GeminiProvider } from './gemini'
 import { ProviderError } from './http'
@@ -27,6 +28,8 @@ export function createChatProvider(config: ConnectionConfig): ChatProvider {
       return new AnthropicProvider(resolved)
     case 'gemini':
       return new GeminiProvider(resolved)
+    case 'claude-cli':
+      return new ClaudeCodeProvider(resolved)
     case 'openai-compatible':
       return new OpenAICompatibleProvider(resolved, config.kind)
   }
