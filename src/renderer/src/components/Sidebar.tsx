@@ -1,4 +1,4 @@
-import { AppWindow, Bot, Code2, FolderKanban, GitBranch, Images, LayoutDashboard, ListChecks, PlugZap, Settings, Workflow, type LucideIcon } from 'lucide-react'
+import { AppWindow, Bot, Building2, Code2, FolderKanban, GitBranch, Images, LayoutDashboard, ListChecks, PlugZap, Settings, Workflow, type LucideIcon } from 'lucide-react'
 import { cx } from './ui'
 import { useStudio, type Page } from '../store'
 import { isOpenTask } from './tasks/meta'
@@ -17,6 +17,7 @@ const NAV: NavItem[] = [
   { page: 'workspace', label: 'Workspace', icon: Code2 },
   { page: 'source', label: 'Source Control', icon: GitBranch },
   { page: 'preview', label: 'Live Preview', icon: AppWindow },
+  { page: 'office', label: 'AI Office', icon: Building2 },
   { page: 'agents', label: 'AI Agents', icon: Bot },
   { page: 'connections', label: 'Model Connections', icon: PlugZap },
   { page: 'workflow', label: 'Workflow Editor', icon: Workflow },

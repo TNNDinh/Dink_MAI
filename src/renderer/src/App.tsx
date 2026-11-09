@@ -16,6 +16,7 @@ import { Assets } from './pages/Assets'
 import { Settings } from './pages/Settings'
 import { SourceControl } from './pages/SourceControl'
 import { Preview } from './pages/Preview'
+import { Office } from './pages/Office'
 import { ApprovalDialog } from './components/ApprovalDialog'
 import { useWatchWorkspaceFolder } from './lib/use-workspace-project'
 
@@ -36,6 +37,7 @@ function PageHost() {
     )
   if (page === 'source') return <SourceControl />
   if (page === 'preview') return <Preview />
+  if (page === 'office') return <Office />
   if (page === 'agents') return <Agents />
   if (page === 'connections') return <Connections />
   if (page === 'tasks') return <Tasks />
