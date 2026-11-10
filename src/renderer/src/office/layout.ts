@@ -1,18 +1,20 @@
 import type { DeptId } from './departments'
 import type { FloorKind } from './assets/floors'
-import { DESK_COLS, DESK_ROWS, DOORS, ENTRANCE, GRID_H, GRID_W, HUB_TABLE_CENTRE, PM_W, ROOMS, ROOM_H, ROOM_W, type FeatureKind, type RoomId, type RoomSpec } from './blueprint'
+import { DESK_COLS, DESK_ROWS, DESK_SLOTS, DIR_VEC, DOORS, ENTRANCE, GRID_H, GRID_W, HUB_TABLE_CENTRE, OPPOSITE, PM_W, ROOMS, ROOM_H, ROOM_W, type Dir, type FeatureKind, type RoomId, type RoomSpec } from './blueprint'
 
 /**
  * The floor plan, built from `blueprint.ts`: rooms, walls, doors, furniture and the walking grid. Seen from the south-east
  * in isometric view: tile (x, y) is drawn at ((x − y)·TW/2, (x + y)·TH/2), so x grows to the right-and-down and y to
  * the left-and-down.
  *
- * Every staff room has 4 desk rows × 4 desks. A desk is a tile with its chair on the tile south of it; the chair is reached
- * from the aisle column next to the desk. Desks are placed from the aisle outwards, so a desk never moves when another one
- * is added. In the east wing everything is mirrored, so the feature strip of each room faces the hub.
+ * Every staff room has 16 workstations (`DESK_SLOTS` in the blueprint). A workstation is a chair and the desk in front of it;
+ * the way the person looks is the way from the chair to the desk, and it is the same number for the sprite of the desk, the
+ * sprite of the chair and the sprite of the person (`Desk.facing`, `seatFacing`). Slots are filled in a fixed order, so a desk
+ * never moves when another one is added. In the east wing everything is mirrored, so the feature strip of each room faces the hub.
  */
 
 export { DESK_COLS, DESK_ROWS, GRID_H, GRID_W, PM_W, ROOM_H, ROOM_W }
+export type { Dir }
 
 export interface Tile {
   x: number
@@ -48,8 +50,10 @@ export interface Desk {
   index: number
   /** Where the table is (blocked). */
   desk: Tile
-  /** Where the employee sits (looking north at the desk). */
+  /** Where the employee sits (looking at the desk). */
   chair: Tile
+  /** The way the person in the chair looks: from the chair to the desk, so toward the keyboard and the screen. */
+  facing: Dir
   /** Where one stands to talk to the person sitting there. */
   approach: Tile
 }
@@ -67,8 +71,10 @@ export interface Prop {
   y: number
   w: number
   h: number
-  /** A workstation's chair. */
+  /** A workstation's chair, on the side of the desk away from where the person looks. */
   chair?: Tile
+  /** The way the person at the workstation looks (toward the desk). */
+  face?: Dir
 }
 
 export interface PmSpots {
@@ -113,6 +119,20 @@ export interface Layout {
 
 const spec = (id: RoomId): RoomSpec => ROOMS.find((r) => r.id === id)!
 
+/** The tile of the chair of a desk whose person looks toward `face`: on the opposite side of the desk (south of it for N). */
+function chairBeside(d: { x: number; y: number; w: number; h: number }, face: Dir): Tile {
+  switch (face) {
+    case 'N':
+      return { x: d.x, y: d.y + d.h }
+    case 'S':
+      return { x: d.x, y: d.y - 1 }
+    case 'E':
+      return { x: d.x - 1, y: d.y }
+    case 'W':
+      return { x: d.x + d.w, y: d.y }
+  }
+}
+
 const build = (): Layout => {
   const hubSpec = spec('hub')
   const doors: Door[] = DOORS.map((d) => ({
@@ -147,7 +167,10 @@ const build = (): Layout => {
       const lx = r.mirror ? r.w - 1 - (ft.x + ft.w - 1) : ft.x
       const x = r.x + lx
       const y = r.y + ft.y
-      props.push({ kind: ft.kind, object: ft.object, content: ft.content, room: r.id, x, y, w: ft.w, h: ft.h, chair: ft.chair ? { x, y: y + ft.h } : undefined })
+      // a mirrored room turns east into west
+      const face: Dir | undefined = ft.chair ? (r.mirror && (ft.face === 'E' || ft.face === 'W') ? OPPOSITE[ft.face] : ft.face ?? 'N') : undefined
+      const chair = face ? chairBeside({ x, y, w: ft.w, h: ft.h }, face) : undefined
+      props.push({ kind: ft.kind, object: ft.object, content: ft.content, room: r.id, x, y, w: ft.w, h: ft.h, chair, face })
     }
   }
 
@@ -226,14 +249,37 @@ export function isWall(x: number, y: number): boolean {
 /** The door whose opening contains the tile, if any. */
 export const doorAt = (x: number, y: number): Door | undefined => getLayout().doors.find((d) => d.tiles.some((t) => t.x === x && t.y === y))
 
-/** Desk `index` of a staff room: 4 per row, rows counted from the aisle, columns from the side away from the feature strip. */
+/** Workstation `index` of a staff room: its chair, its desk (in front of the chair), the way the person looks and where one stands to talk to them. */
 export function deskOf(dept: DeptId, index: number): Desk {
   const room = roomOf(dept)
-  const col = index % DESK_COLS
-  const row = Math.floor(index / DESK_COLS)
-  const x = room.mirror ? room.x + (room.w - 1 - (1 + 2 * col)) : room.x + 1 + 2 * col
-  const chairY = room.entryY - 1 - 2 * row
-  return { index, desk: { x, y: chairY - 1 }, chair: { x, y: chairY }, approach: { x: room.mirror ? x - 1 : x + 1, y: chairY } }
+  const slot = DESK_SLOTS[index % DESK_SLOTS.length]
+  const gx = (lx: number): number => (room.mirror ? room.x + room.w - 1 - lx : room.x + lx)
+  const facing: Dir = room.mirror && (slot.face === 'E' || slot.face === 'W') ? OPPOSITE[slot.face] : slot.face
+  const chair = { x: gx(slot.x), y: room.y + slot.y }
+  const v = DIR_VEC[facing]
+  return { index, desk: { x: chair.x + v.x, y: chair.y + v.y }, chair, facing, approach: { x: gx(slot.approach.x), y: room.y + slot.approach.y } }
+}
+
+/** The way a person looks when sitting on a chair (a workstation's, a department desk's or the PM's), or undefined when the tile is not one. */
+export function seatFacing(tile: Tile): Dir | undefined {
+  return seats().get(`${tile.x},${tile.y}`)
+}
+
+let seatCache: Map<string, Dir> | null = null
+function seats(): Map<string, Dir> {
+  if (seatCache) return seatCache
+  const L = getLayout()
+  const m = new Map<string, Dir>()
+  for (const r of L.rooms) {
+    for (let i = 0; i < DESK_SLOTS.length; i++) {
+      const d = deskOf(r.dept, i)
+      m.set(`${d.chair.x},${d.chair.y}`, d.facing)
+    }
+  }
+  for (const p of L.props) if (p.chair && p.face) m.set(`${p.chair.x},${p.chair.y}`, p.face)
+  m.set(`${L.pm.seat.x},${L.pm.seat.y}`, 'N')
+  seatCache = m
+  return m
 }
 
 /** Where a visitor stands inside the department, just past its door onto the hub. */

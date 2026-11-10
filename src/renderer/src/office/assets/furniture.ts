@@ -1,7 +1,8 @@
+import type { Dir } from '../blueprint'
 import type { DeptId } from '../departments'
 import { EastFace, Grid, IP, SouthFace, groundShadow, isoBox, isoFlat, type Material } from './iso'
 import type { PixMap } from './pixmap'
-import { BOOKS, CLIPBOARD, DICE, HEADPHONES, LAMP, MINI_PLANT, MIXER, MUG, MUG_WHITE, NAMEPLATE, PALETTE_ART, PAPER_STACK, PEN_JAR, PHONE, SERVER, STICKY, monitorRows, screenContent, type ScreenState } from './props'
+import { BOOKS, CLIPBOARD, DICE, HEADPHONES, LAMP, MINI_PLANT, MIXER, MUG, MUG_WHITE, NAMEPLATE, PALETTE_ART, PAPER_STACK, PEN_JAR, PHONE, SERVER, STICKY, monitorBackRows, monitorRows, screenContent, type ScreenState } from './props'
 
 /**
  * Furniture sprites. Each is a PixMap built from an iso shell (slabs and boxes), a grain/texture pass, hand-drawn details
@@ -31,88 +32,129 @@ export const DESK_AY = 28
 export const DESK_W = 32
 export const DESK_H = 46
 
-function deskShell(g: Grid, ax: number, ay: number, m: Material, u1 = 0.96, drawers = true): void {
-  groundShadow(g, ax, ay, 0.06, 0.16, u1 + 0.05, 0.95, 3, 2)
+/**
+ * A workstation is drawn once for a person looking north and then turned a quarter at a time, so every desk has its screen,
+ * keyboard and drawers where the person at it expects them. (u, v) are tile coordinates of the desk as seen by a person
+ * looking north (u to their right, v toward them); `turn` says where that point lands when the person looks toward `face`.
+ */
+export const turn = (face: Dir, u: number, v: number): [number, number] => (face === 'N' ? [u, v] : face === 'S' ? [1 - u, 1 - v] : face === 'E' ? [1 - v, u] : [v, 1 - u])
+
+/** A turned footprint: the two turned corners, smallest first. */
+const turnRect = (face: Dir, u0: number, v0: number, u1: number, v1: number): [number, number, number, number] => {
+  const [a, b] = turn(face, u0, v0)
+  const [c, d] = turn(face, u1, v1)
+  return [Math.min(a, c), Math.min(b, d), Math.max(a, c), Math.max(b, d)]
+}
+
+function box(g: Grid, ax: number, ay: number, face: Dir, u0: number, v0: number, u1: number, v1: number, z0: number, z1: number, m: Material): [number, number, number, number] {
+  const r = turnRect(face, u0, v0, u1, v1)
+  isoBox(g, ax, ay, r[0], r[1], r[2], r[3], z0, z1, m)
+  return r
+}
+
+function deskShell(g: Grid, ax: number, ay: number, face: Dir, m: Material, u1 = 0.96, drawers = true): void {
+  const sh = turnRect(face, 0.06, 0.16, u1 + 0.05, 0.95)
+  groundShadow(g, ax, ay, sh[0], sh[1], sh[2], sh[3], 3, 2)
   // legs / pedestal under the slab
-  isoBox(g, ax, ay, 0.08, 0.2, 0.16, 0.82, 0, 8, { top: m.south, south: m.east, east: 'l' })
-  if (drawers) isoBox(g, ax, ay, u1 - 0.34, 0.16, u1 - 0.02, 0.84, 0, 8, { top: m.south, south: m.south, east: m.east, edge: m.east, corner: m.east })
-  isoBox(g, ax, ay, 0.04, 0.12, u1, 0.88, 8, 11, m)
+  box(g, ax, ay, face, 0.08, 0.2, 0.16, 0.82, 0, 8, { top: m.south, south: m.east, east: 'l' })
+  let ped: [number, number, number, number] | null = null
+  if (drawers) ped = box(g, ax, ay, face, u1 - 0.34, 0.16, u1 - 0.02, 0.84, 0, 8, { top: m.south, south: m.south, east: m.east, edge: m.east, corner: m.east })
+  box(g, ax, ay, face, 0.04, 0.12, u1, 0.88, 8, 11, m)
   if (m === WOOD || m === WOOD_DARK) grain(g, m.top, m.south)
-  if (drawers) {
-    const f = new EastFace(g, ...IP(ax, ay, u1 - 0.02, 0.84, 0))
-    f.r('h', 3, 4, 3, 1)
-    f.r('k', 3, 3, 3, 1)
+  if (ped) {
+    // the drawer handle, on the side of the pedestal the camera sees
+    const wpx = Math.round((ped[3] - ped[1]) * 16)
+    const f = new EastFace(g, ...IP(ax, ay, ped[2], ped[3], 0))
+    const hw = Math.max(1, Math.min(3, wpx - 2))
+    const at = Math.max(0, (wpx - hw) >> 1)
+    f.r('h', at, 4, hw, 1)
+    f.r('k', at, 3, hw, 1)
   }
 }
 
-function keyboard(g: Grid, ax: number, ay: number, u: number, v: number): void {
-  isoBox(g, ax, ay, u, v, u + 0.42, v + 0.15, 11, 12, { top: 'w', south: 'h', east: 'i', rim: 'g' })
+function keyboard(g: Grid, ax: number, ay: number, face: Dir, u: number, v: number): void {
+  box(g, ax, ay, face, u, v, u + 0.42, v + 0.15, 11, 12, { top: 'w', south: 'h', east: 'i', rim: 'g' })
   g.speckle('w', 'h', (x, y) => (x + y) % 3 === 0)
 }
 
-export function deskMap(dept: DeptId, state: ScreenState, frame: number): PixMap {
+/**
+ * The desk of a workstation for a person looking toward `face` (N: the chair is south of the desk and the screen faces the
+ * camera; S: the chair is north and we see the back of the screen; W: the screen faces east, to the camera; E: its back).
+ */
+export function deskMap(dept: DeptId, state: ScreenState, frame: number, face: Dir = 'N'): PixMap {
   const g = new Grid(DESK_W, DESK_H)
   const ax = DESK_AX
   const ay = DESK_AY
   const m = DESK_MAT[dept]
-  deskShell(g, ax, ay, m)
+  deskShell(g, ax, ay, face, m)
   const z = 11
+  const S = (rows: readonly string[], u: number, v: number, zz = z): void => {
+    const [x, y] = turn(face, u, v)
+    put(g, rows, ax, ay, x, y, zz)
+  }
+  const K = (u: number, v: number): void => keyboard(g, ax, ay, face, u, v)
+  /** A monitor whose bottom-left corner (for the person) is at (u, v): its screen towards the person. */
   const mon = (u: number, v: number, iw: number, ih: number, fr: number): void => {
-    const [x, y] = IP(ax, ay, u, v, z)
-    new SouthFace(g, x, y).stamp(monitorRows(screenContent(dept, state, fr, iw, ih)), 0, 0)
+    const du = (iw + 4) / 16
+    const screen = monitorRows(screenContent(dept, state, fr, iw, ih))
+    const back = monitorBackRows(iw, ih, state === 'on')
+    if (face === 'N') new SouthFace(g, ...IP(ax, ay, u, v, z)).stamp(screen, 0, 0)
+    else if (face === 'S') new SouthFace(g, ...IP(ax, ay, 1 - u - du, 1 - v, z)).stamp(back, 0, 0)
+    else if (face === 'W') new EastFace(g, ...IP(ax, ay, v, 1 - u, z)).stamp(screen, 0, 0)
+    else new EastFace(g, ...IP(ax, ay, 1 - v, u + du, z)).stamp(back, 0, 0)
   }
   switch (dept) {
     case 'dev': {
       mon(0.02, 0.3, 4, 5, frame)
       mon(0.5, 0.3, 4, 5, frame + 1)
-      keyboard(g, ax, ay, 0.28, 0.58)
-      put(g, MUG, ax, ay, 0.86, 0.66, z)
+      K(0.28, 0.58)
+      S(MUG, 0.86, 0.66)
       break
     }
     case 'art': {
       mon(0.1, 0.3, 7, 5, frame)
       // drawing tablet with a stylus
-      isoBox(g, ax, ay, 0.32, 0.56, 0.8, 0.84, 11, 12, { top: 'l', south: 'k', east: 'k', rim: 'j' })
-      put(g, ['w', 'w'], ax, ay, 0.62, 0.7, 12)
-      put(g, PALETTE_ART, ax, ay, 0.1, 0.78, 12)
-      put(g, PEN_JAR, ax, ay, 0.86, 0.3, 11)
+      box(g, ax, ay, face, 0.32, 0.56, 0.8, 0.84, 11, 12, { top: 'l', south: 'k', east: 'k', rim: 'j' })
+      S(['w', 'w'], 0.62, 0.7, 12)
+      S(PALETTE_ART, 0.1, 0.78, 12)
+      S(PEN_JAR, 0.86, 0.3, 11)
       break
     }
     case 'audio': {
       mon(0.1, 0.3, 7, 5, frame)
-      put(g, MIXER, ax, ay, 0.28, 0.72, z)
-      put(g, HEADPHONES, ax, ay, 0.88, 0.7, z)
+      S(MIXER, 0.28, 0.72)
+      S(HEADPHONES, 0.88, 0.7)
       break
     }
     case 'qa': {
       mon(0.1, 0.3, 7, 5, frame)
-      keyboard(g, ax, ay, 0.28, 0.6)
-      put(g, PHONE, ax, ay, 0.84, 0.62, z)
-      put(g, CLIPBOARD, ax, ay, 0.1, 0.7, z)
+      K(0.28, 0.6)
+      S(PHONE, 0.84, 0.62)
+      S(CLIPBOARD, 0.1, 0.7)
       break
     }
     case 'gd': {
       mon(0.1, 0.3, 7, 5, frame)
-      keyboard(g, ax, ay, 0.3, 0.6)
-      put(g, BOOKS, ax, ay, 0.82, 0.6, z)
-      put(g, STICKY, ax, ay, 0.12, 0.74, z)
-      put(g, DICE, ax, ay, 0.9, 0.8, z)
+      K(0.3, 0.6)
+      S(BOOKS, 0.82, 0.6)
+      S(STICKY, 0.12, 0.74)
+      S(DICE, 0.9, 0.8)
       break
     }
     case 'integration': {
       mon(0.34, 0.3, 7, 5, frame)
-      put(g, SERVER.map((r, j) => (state === 'on' && j % 2 === 0 && (frame + j) % 2 === 0 ? r.replace(/e/g, 'y') : r)), ax, ay, 0.04, 0.4, z)
-      keyboard(g, ax, ay, 0.38, 0.62)
+      S(SERVER.map((r, j) => (state === 'on' && j % 2 === 0 && (frame + j) % 2 === 0 ? r.replace(/e/g, 'y') : r)), 0.04, 0.4)
+      K(0.38, 0.62)
       break
     }
     default: {
       mon(0.1, 0.3, 7, 5, frame)
-      keyboard(g, ax, ay, 0.3, 0.6)
+      K(0.3, 0.6)
     }
   }
   if (dept !== 'dev' && dept !== 'art') {
-    if (dept === 'gd' || dept === 'pm') put(g, LAMP, ax, ay, 0.9, 0.3, z)
-    else if (dept === 'integration') put(g, MUG_WHITE, ax, ay, 0.9, 0.7, z)
+    if (dept === 'gd' || dept === 'pm') S(LAMP, 0.9, 0.3)
+    else if (dept === 'integration') S(MUG_WHITE, 0.9, 0.7)
   }
   g.outline('k')
   return g.toMap(ax, ay)
@@ -142,7 +184,7 @@ export function pmDeskMap(state: ScreenState, frame: number): PixMap {
   }
   mon(0.26, frame)
   mon(0.96, frame + 1)
-  keyboard(g, ax, ay, 0.5, 0.6)
+  keyboard(g, ax, ay, 'N', 0.5, 0.6)
   put(g, PAPER_STACK, ax, ay, 1.38, 0.62, z)
   put(g, NAMEPLATE, ax, ay, 1.0, 0.8, z)
   put(g, LAMP, ax, ay, 0.12, 0.3, z)
@@ -174,12 +216,14 @@ export function chairSeatMap(): PixMap {
   return g.toMap(ax, ay)
 }
 
-export function chairBackMap(): PixMap {
+/** The back of a chair for a person looking toward `face`: it stands on the side of the seat behind them. */
+export function chairBackMap(face: Dir = 'N'): PixMap {
   const g = new Grid(32, 44)
   const ax = CHAIR_AX
   const ay = CHAIR_AY
-  isoBox(g, ax, ay, 0.24, 0.74, 0.76, 0.86, 11, 24, { top: 'A', south: 'a', east: 'b', rim: 'A', edge: 'A', corner: 'B' })
-  const f = new SouthFace(g, ...IP(ax, ay, 0.24, 0.86, 11))
+  const r = box(g, ax, ay, face, 0.24, 0.74, 0.76, 0.86, 11, 24, { top: 'A', south: 'a', east: 'b', rim: 'A', edge: 'A', corner: 'B' })
+  // the padding and the head rest, on the face the camera sees
+  const f = face === 'N' || face === 'S' ? new SouthFace(g, ...IP(ax, ay, r[0], r[3], 11)) : new EastFace(g, ...IP(ax, ay, r[2], r[3], 11))
   f.r('b', 3, 6, 6, 1)
   f.r('B', 3, 5, 6, 1)
   f.r('j', 5, 0, 2, 3)
@@ -359,6 +403,7 @@ export function benchMap(): PixMap {
 export const FURNITURE_MAPS: Record<string, PixMap> = {
   'chair.seat': chairSeatMap(),
   'chair.back': chairBackMap(),
+  ...Object.fromEntries((['S', 'E', 'W'] as Dir[]).map((f) => [`chair.back.${f}`, chairBackMap(f)])),
   stool: stoolMap(),
   'meeting-table': meetingTableMap(),
   sofa: sofaMap(),
@@ -370,5 +415,6 @@ export const FURNITURE_MAPS: Record<string, PixMap> = {
   vending: vendingMap(),
   bench: benchMap(),
   'pm-desk': pmDeskMap('on', 0),
-  ...Object.fromEntries((['pm', 'gd', 'art', 'audio', 'dev', 'qa', 'integration'] as DeptId[]).flatMap((d) => (['on', 'idle', 'err', 'off'] as ScreenState[]).map((s) => [`desk.${d}.${s}`, deskMap(d, s, 0)])))
+  ...Object.fromEntries((['pm', 'gd', 'art', 'audio', 'dev', 'qa', 'integration'] as DeptId[]).flatMap((d) => (['on', 'idle', 'err', 'off'] as ScreenState[]).map((s) => [`desk.${d}.${s}`, deskMap(d, s, 0)]))),
+  ...Object.fromEntries((['S', 'E', 'W'] as Dir[]).flatMap((f) => (['dev', 'art', 'qa'] as DeptId[]).map((d) => [`desk.${d}.on.${f}`, deskMap(d, 'on', 0, f)])))
 }

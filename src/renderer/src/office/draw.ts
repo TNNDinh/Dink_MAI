@@ -1,6 +1,6 @@
-import { STATE_LOOK, type AgentState } from './blueprint'
+import { DIR_VEC, STATE_LOOK, type AgentState } from './blueprint'
 import { DEPT, type DeptId } from './departments'
-import { deskOf, getLayout, type Tile } from './layout'
+import { deskOf, getLayout, type Desk, type Tile } from './layout'
 import type { Employee } from './model'
 import type { ScreenState } from './assets/props'
 import { drawBoards } from './boards'
@@ -67,13 +67,15 @@ function actorItem(a: Actor, emp: Employee | undefined, state: AgentState, t: nu
   }
 }
 
-/** The glow of a working screen on the floor in front of its desk. */
-function glowItem(dept: Employee['department'], x: number, y: number): Item {
-  const [cx, cy] = toWorld(x + 0.5, y + 1.05)
+/** The glow of a working screen on the floor between its desk and the chair in front of it, whichever way that chair faces. */
+function glowItem(dept: Employee['department'], d: Desk): Item {
+  const v = DIR_VEC[d.facing]
+  const [cx, cy] = toWorld(d.desk.x + 0.5 - v.x * 0.55, d.desk.y + 0.5 - v.y * 0.55)
   const [r, gr, b] = hex(DEPT[dept].color)
   const color = `rgba(${r},${gr},${b},0.055)`
   return {
-    d: x + y + 0.99,
+    // under both the desk and the person, wherever the chair is
+    d: Math.min(d.desk.x + d.desk.y, d.chair.x + d.chair.y) + 0.96,
     o: 0,
     fn: (g) => {
       g.save()
@@ -109,7 +111,7 @@ function buildItems(sim: OfficeSim, t: number): Item[] {
       put(furniture(blink ? 'rack.b' : 'rack'), p.x, p.y, p.x + p.y + 1, 1)
     } else if (p.kind === 'station' && p.content) {
       const dept = p.content as DeptId
-      const desk = deskSprite(dept, activeIn(dept) ? 'on' : 'idle', Math.floor(t * 3 + p.x) % 3)
+      const desk = deskSprite(dept, activeIn(dept) ? 'on' : 'idle', Math.floor(t * 3 + p.x) % 3, p.face ?? 'N')
       put(desk, p.x, p.y, p.x + p.y + 1, 1)
     }
   }
@@ -123,12 +125,12 @@ function buildItems(sim: OfficeSim, t: number): Item[] {
       const agent = sim.stateOf(e.id)
       const state = screenOf(agent)
       const accent = DEPT[e.department].color
-      const desk = deskSprite(e.department, state, state === 'on' ? (frame + e.deskIndex) % 3 : 0)
+      const desk = deskSprite(e.department, state, state === 'on' ? (frame + e.deskIndex) % 3 : 0, d.facing)
       const seat = chairSeat(accent)
-      const back = chairBack(accent)
+      const back = chairBack(accent, d.facing)
       const [dx, dy] = toWorld(d.desk.x, d.desk.y)
       const [cx, cy] = toWorld(d.chair.x, d.chair.y)
-      if (state === 'on') items.push(glowItem(e.department, d.desk.x, d.desk.y))
+      if (state === 'on') items.push(glowItem(e.department, d))
       items.push({ d: d.desk.x + d.desk.y + 1, o: 1, fn: (g) => g.drawImage(desk.c, Math.round(dx - desk.ox), Math.round(dy - desk.oy)) })
       items.push({ d: d.chair.x + d.chair.y + 0.97, o: 1, fn: (g) => g.drawImage(seat.c, Math.round(cx - seat.ox), Math.round(cy - seat.oy)) })
       items.push({ d: d.chair.x + d.chair.y + 1, o: 2, fn: (g) => g.drawImage(back.c, Math.round(cx - back.ox), Math.round(cy - back.oy)) })

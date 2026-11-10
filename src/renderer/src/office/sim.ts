@@ -1,10 +1,9 @@
 import type { DeptId } from './departments'
-import { EFFECT_LOOK, type AgentState, type EffectKind } from './blueprint'
-import { deskOf, findPath, getLayout, roomAt, visitSpot, walkGrid, type Tile } from './layout'
+import { EFFECT_LOOK, type AgentState, type Dir, type EffectKind } from './blueprint'
+import { deskOf, findPath, getLayout, roomAt, seatFacing, visitSpot, walkGrid, type Tile } from './layout'
 import type { Employee, OfficeSnapshot, OfficeTask } from './model'
 
-/** Grid directions: N is −y, S is +y, E is +x, W is −x (on screen: up-right, down-left, down-right, up-left). */
-export type Dir = 'N' | 'S' | 'E' | 'W'
+export type { Dir }
 export type Pose = 'sit' | 'stand' | 'walk'
 
 export type Step =
@@ -162,7 +161,7 @@ export class OfficeSim {
       if (this.actors.has(e.id)) continue
       const chair = deskOf(e.department, e.deskIndex).chair
       if (first) {
-        this.spawn(e.id, 'employee', chair, chair, 'N', 0)
+        this.spawn(e.id, 'employee', chair, chair, seatFacing(chair) ?? 'N', 0)
         continue
       }
       const a = this.spawn(e.id, 'employee', L.entrance, chair, 'E', this.t + hires * 1.4)
@@ -661,7 +660,8 @@ export class OfficeSim {
         return true
       case 'sit':
         a.pose = 'sit'
-        a.facing = s.at ? facingFrom(a.tile, s.at, a.facing) : 'N'
+        // a chair knows which way it looks; a stool (the tables of the hub) looks at what the step names
+        a.facing = s.at ? facingFrom(a.tile, s.at, a.facing) : seatFacing(a.tile) ?? a.facing
         return true
       case 'signal':
         this.signals.add(s.name)

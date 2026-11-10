@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { DEPARTMENTS } from '../src/renderer/src/office/departments'
-import { DESK_COLS, DESK_ROWS, deskOf, doorAt, findPath, getLayout, hubSpot, isFloor, isWall, roomOf, visitSpot, walkGrid } from '../src/renderer/src/office/layout'
+import { DIR_VEC, OPPOSITE } from '../src/renderer/src/office/blueprint'
+import { DESK_COLS, DESK_ROWS, deskOf, doorAt, findPath, getLayout, hubSpot, isFloor, isWall, roomOf, seatFacing, visitSpot, walkGrid } from '../src/renderer/src/office/layout'
 import { MAX_STAFF } from '../src/renderer/src/office/model'
 
 const STAFF = DEPARTMENTS.filter((d) => d.id !== 'pm')
@@ -44,20 +45,73 @@ describe('office floor plan', () => {
     }
   })
 
-  it('keeps a desk where it is when more desks are added', () => {
+  it('keeps a desk where it is when more desks are added, and gives every desk its own place', () => {
     expect(deskOf('dev', 0)).toEqual(deskOf('dev', 0))
-    const first = deskOf('dev', 3)
-    expect(first.chair.y).toBe(deskOf('dev', 0).chair.y)
-    expect(deskOf('dev', 4).chair.y).toBeLessThan(first.chair.y)
+    for (const d of STAFF) {
+      const chairs = new Set(Array.from({ length: MAX_STAFF }, (_, i) => key(deskOf(d.id, i).chair)))
+      expect(chairs.size, d.id).toBe(MAX_STAFF)
+    }
+  })
+
+  it('turns every workstation by its own layout: the person looks from the chair at the desk, never one fixed way', () => {
+    for (const d of STAFF) {
+      const seen = new Set<string>()
+      for (let i = 0; i < MAX_STAFF; i++) {
+        const w = deskOf(d.id, i)
+        const v = DIR_VEC[w.facing]
+        expect({ x: w.chair.x + v.x, y: w.chair.y + v.y }, `${d.id} ${i}: the desk is in front of the chair`).toEqual(w.desk)
+        // the approach is a tile next to the chair, on a side that is neither the desk nor the one behind another desk
+        expect(Math.abs(w.approach.x - w.chair.x) + Math.abs(w.approach.y - w.chair.y), `${d.id} ${i}`).toBe(1)
+        expect(seatFacing(w.chair), `${d.id} ${i}`).toBe(w.facing)
+        if (i < 4) seen.add(w.facing)
+      }
+      // the first four workstations of every room already look four different ways
+      expect(seen.size, d.id).toBe(4)
+    }
+    // every direction is used, and the people of one pod look at each other
+    const all = new Set(Array.from({ length: MAX_STAFF }, (_, i) => deskOf('dev', i).facing))
+    expect([...all].sort()).toEqual(['E', 'N', 'S', 'W'])
+    const a = deskOf('dev', 0)
+    const b = deskOf('dev', 1)
+    expect(OPPOSITE[a.facing]).toBe(b.facing)
+    expect(Math.abs(a.chair.y - b.chair.y)).toBe(3)
+  })
+
+  it('turns the east wing with its plan: what looks east in the west wing looks west there', () => {
+    for (let i = 0; i < MAX_STAFF; i++) {
+      const w = deskOf('art', i)
+      const e = deskOf('dev', i)
+      expect(e.facing).toBe(w.facing === 'E' ? 'W' : w.facing === 'W' ? 'E' : w.facing)
+      // the same slot, seen in the mirror: the same row, the other side of the room
+      expect(e.chair.y - roomOf('dev').y).toBe(w.chair.y - roomOf('art').y)
+      expect(e.chair.x - roomOf('dev').x).toBe(roomOf('art').w - 1 - (w.chair.x - roomOf('art').x))
+    }
+  })
+
+  it('gives the workstations of the offices and the hub a facing too, with the chair opposite the way they look', () => {
+    const L = getLayout()
+    const ws = L.props.filter((p) => p.chair)
+    expect(ws.length).toBeGreaterThanOrEqual(8)
+    for (const p of ws) {
+      expect(p.face, p.object).toBeDefined()
+      const v = DIR_VEC[p.face!]
+      expect({ x: p.chair!.x + v.x, y: p.chair!.y + v.y }, `${p.object} at ${p.x},${p.y}`).toEqual({ x: p.x, y: p.y })
+      expect(seatFacing(p.chair!)).toBe(p.face)
+    }
+    // the common workstations of the hub do not all look the same way
+    const hub = ws.filter((p) => p.object === 'common-workstation').map((p) => p.face)
+    expect(new Set(hub).size).toBeGreaterThanOrEqual(3)
+    expect(seatFacing(L.pm.seat)).toBe('N')
+    expect(seatFacing({ x: 0, y: 0 })).toBeUndefined()
   })
 
   it('mirrors the east wing so the aisle of every desk is on the side of the hub', () => {
     for (const id of ['qa', 'dev', 'integration'] as const) {
       expect(roomOf(id).mirror).toBe(true)
       const d = deskOf(id, 0)
-      expect(d.approach.x).toBe(d.desk.x - 1)
+      expect(d.approach.x).toBe(d.chair.x - 1)
     }
-    for (const id of ['gd', 'art', 'audio'] as const) expect(deskOf(id, 0).approach.x).toBe(deskOf(id, 0).desk.x + 1)
+    for (const id of ['gd', 'art', 'audio'] as const) expect(deskOf(id, 0).approach.x).toBe(deskOf(id, 0).chair.x + 1)
   })
 
   it('lets everyone walk from the entrance to every chair, even when every room is full', () => {

@@ -286,7 +286,7 @@ export function buildStatics(): Item[] {
     }
     if (p.chair) {
       put(chairSeat(accent), p.chair.x, p.chair.y, p.chair.x + p.chair.y + 0.97, 1)
-      put(chairBack(accent), p.chair.x, p.chair.y, p.chair.x + p.chair.y + 1, 2)
+      put(chairBack(accent, p.face ?? 'N'), p.chair.x, p.chair.y, p.chair.x + p.chair.y + 1, 2)
     }
   }
   for (const s of L.pm.meetingSeats) put(furniture('stool'), s.x, s.y, front(s), 1)

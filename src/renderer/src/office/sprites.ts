@@ -6,6 +6,7 @@ import { BASE, accentRamp, type Look } from './assets/palette'
 import { bake, px, type Palette, type PixMap } from './assets/pixmap'
 import type { ScreenState } from './assets/props'
 import type { Sprite } from './pixels'
+import type { Dir } from './blueprint'
 
 /** Baked sprites of the office: every one comes from a pixel map of the asset pipeline (assets/*), nothing is drawn with shapes. */
 
@@ -33,10 +34,11 @@ function lazy(key: string, make: () => PixMap, accent: string, flip = false): Sp
 export const PM_ACCENT = '#e0b341'
 export const PM_CHAIR = '#3d4f86'
 
-export const deskSprite = (dept: DeptId, state: ScreenState, frame: number): Sprite => lazy(`desk:${dept}:${state}:${frame}`, () => deskMap(dept, state, frame), DEPT[dept].color)
+/** The desk of a workstation whose person looks toward `face`; the screen, keyboard and drawers are turned with it. */
+export const deskSprite = (dept: DeptId, state: ScreenState, frame: number, face: Dir = 'N'): Sprite => lazy(`desk:${dept}:${state}:${frame}:${face}`, () => deskMap(dept, state, frame, face), DEPT[dept].color)
 export const pmDeskSprite = (state: ScreenState, frame: number): Sprite => lazy(`pmdesk:${state}:${frame}`, () => pmDeskMap(state, frame), PM_ACCENT)
 export const chairSeat = (accent: string): Sprite => lazy(`chair.seat:${accent}`, chairSeatMap, accent)
-export const chairBack = (accent: string): Sprite => lazy(`chair.back:${accent}`, chairBackMap, accent)
+export const chairBack = (accent: string, face: Dir = 'N'): Sprite => lazy(`chair.back:${accent}:${face}`, () => chairBackMap(face), accent)
 
 /** A piece of furniture from the asset table, in the accent of a department (only some pieces use it). */
 export const furniture = (name: string, accent = '#5b9bf0'): Sprite => lazy(`f:${name}:${accent}`, () => FURNITURE_MAPS[name] ?? STUDIO_MAPS[name], accent)

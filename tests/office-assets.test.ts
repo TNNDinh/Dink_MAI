@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 import { BASE, accentRamp, type Look } from '../src/renderer/src/office/assets/palette'
 import { CHARACTER_MAPS, OUTFIT_MAPS, personMap, type View } from '../src/renderer/src/office/assets/characters'
 import { mapSize, unknownChars, type PixMap } from '../src/renderer/src/office/assets/pixmap'
-import { FURNITURE_MAPS } from '../src/renderer/src/office/assets/furniture'
+import { FURNITURE_MAPS, chairBackMap, deskMap } from '../src/renderer/src/office/assets/furniture'
 import { STUDIO_MAPS } from '../src/renderer/src/office/assets/studio'
 import { FLOOR_PAL, floorPatch, type FloorKind } from '../src/renderer/src/office/assets/floors'
 import { LOW_H, WALL_H, doorPost, lowElevation, northElevation, northTile, southTile, westTile } from '../src/renderer/src/office/assets/walls'
@@ -73,6 +73,29 @@ describe('office furniture sprites', () => {
       expect(m.rows.every((r) => r.length === w), `${name}: rows have different widths`).toBe(true)
       expect(unknownChars(m, FULL), `${name}: characters missing in the palette`).toEqual([])
     }
+  })
+
+  it('draws a workstation for each of the four ways a person can look, each with its own pixels', () => {
+    const depts = ['pm', 'gd', 'art', 'audio', 'dev', 'qa', 'integration'] as const
+    for (const dept of depts) {
+      const maps = (['N', 'S', 'E', 'W'] as const).map((f) => JSON.stringify(deskMap(dept, 'on', 0, f).rows))
+      expect(new Set(maps).size, dept).toBe(4)
+    }
+    const backs = (['N', 'S', 'E', 'W'] as const).map((f) => JSON.stringify(chairBackMap(f).rows))
+    expect(new Set(backs).size).toBe(4)
+    // the facing of the default is north, as before
+    expect(deskMap('dev', 'on', 0).rows).toEqual(deskMap('dev', 'on', 0, 'N').rows)
+    // the same sprite size for every facing, so the anchor of one is the anchor of all
+    for (const f of ['S', 'E', 'W'] as const) expect(mapSize(deskMap('qa', 'on', 0, f))).toEqual(mapSize(deskMap('qa', 'on', 0, 'N')))
+  })
+
+  it('seen from the side, a seated person reaches forward to the keyboard; from the front or the back the forearms stay short', () => {
+    const side = personMap(LOOKS[1], 'dev', '#5b9bf0', 'staff', { view: 'E', pose: 'sit', frame: 0 })
+    const standing = personMap(LOOKS[1], 'dev', '#5b9bf0', 'staff', { view: 'E', pose: 'stand', frame: 0 })
+    expect(JSON.stringify(side.map.rows)).not.toEqual(JSON.stringify(standing.map.rows))
+    expect(CHARACTER_MAPS.arm_e_sit).toBeDefined()
+    // the forearm is wider than the hanging arm: it points to the desk
+    expect(mapSize(CHARACTER_MAPS.arm_e_sit).w).toBeGreaterThan(mapSize(CHARACTER_MAPS.arm_e).w)
   })
 
   it('every studio piece (racks, console, booth, speakers, easel, bench, storage, round table) is a clean pixel map', () => {

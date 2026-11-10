@@ -32,6 +32,34 @@ describe('the people of the office', () => {
     expect(sim.actors.get('dev-1')!.x).toBe(deskOf('dev', 0).chair.x)
   })
 
+  it('sits each person facing their own desk: the way of the chair, whatever the room, at the start and after every walk', () => {
+    const sim = new OfficeSim()
+    const tasks = Array.from({ length: 5 }, (_, i) => task({ id: `d${i}`, status: 'in_progress' }))
+    sim.sync(office(tasks))
+    const facings = new Set<string>()
+    for (let i = 0; i < 4; i++) {
+      const a = sim.actors.get(`dev-${i + 1}`)!
+      const desk = deskOf('dev', i)
+      expect(a.pose).toBe('sit')
+      expect(a.facing, `dev-${i + 1}`).toBe(desk.facing)
+      facings.add(a.facing)
+    }
+    expect(facings.size).toBe(4)
+    // a new hire who walks in from the entrance turns to the desk when they sit
+    sim.sync(office([...tasks, task({ id: 'late' })]))
+    const hire = sim.actors.get('dev-6')!
+    play(sim, 90, undefined, () => !sim.busy())
+    expect(hire.pose).toBe('sit')
+    expect(hire.facing).toBe(deskOf('dev', 5).facing)
+    // someone who is walked away from their desk and comes back sits facing it again
+    const a = sim.actors.get('dev-3')!
+    a.steps.push({ k: 'goto', to: getLayout().entrance }, { k: 'goto', to: deskOf('dev', 2).chair }, { k: 'sit' })
+    a.pose = 'stand'
+    play(sim, 120, undefined, () => !sim.busy() && a.pose === 'sit')
+    expect(a.pose).toBe('sit')
+    expect(a.facing).toBe(deskOf('dev', 2).facing)
+  })
+
   it('has one person per employee of the data, no more', () => {
     const sim = new OfficeSim()
     sim.sync(office(Array.from({ length: 10 }, (_, i) => task({ id: `d${i}`, role: 'game_designer' }))))

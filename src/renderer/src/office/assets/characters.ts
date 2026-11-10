@@ -105,7 +105,9 @@ const OUTFIT: Record<string, Partial<Record<View, PixMap>>> = {
 const ARM_L: PixMap = m('kS', 'kS', 'kT', 'kT', 'ks', 'kt')
 const ARM_R: PixMap = m('Uk', 'Uk', 'Uk', 'Uk', 'tk', 'tk')
 const ARM_E: PixMap = m('Sk', 'Tk', 'Tk', 'Tk', 'sk', 'tk')
-/** Seated at the keyboard: the forearms are forward, so only a short stub shows. */
+/** Seen from the side and seated at the keyboard: the upper arm hangs, the forearm reaches forward (toward the desk) and the hand rests on it. */
+const ARM_E_SIT: PixMap = m('Sk..', 'TTTk', '.sst')
+/** Seated at the keyboard, seen from the front or the back: the forearms are forward, so only a short stub shows. */
 const ARM_L_SIT: PixMap = m('kS', 'kT', 'ks')
 const ARM_R_SIT: PixMap = m('Uk', 'Uk', 'tk')
 
@@ -164,7 +166,7 @@ export function personMap(look: Look, dept: string, accent: string, role: 'staff
   const outfit = OUTFIT[role === 'pm' ? 'pm' : accessoryOf(dept)]?.[view]
   if (outfit) layers.push({ map: outfit, pal: { ...pal, ...accentPal(accent) }, x: TORSO_X, y: TORSO_Y })
   if (view === 'E') {
-    layers.push({ map: ARM_E, pal, x: TORSO_X + 3, y: TORSO_Y + 1 + (sit ? typing : swing) })
+    layers.push({ map: sit ? ARM_E_SIT : ARM_E, pal, x: TORSO_X + 3, y: TORSO_Y + 2 + (sit ? typing : swing - 1) })
   } else if (sit) {
     layers.push({ map: ARM_L_SIT, pal, x: TORSO_X - 2, y: TORSO_Y + 1 - typing })
     layers.push({ map: ARM_R_SIT, pal, x: TORSO_X + 8, y: TORSO_Y + 1 + typing - 1 })
@@ -214,7 +216,8 @@ export const CHARACTER_MAPS: Record<string, PixMap> = {
   ...Object.fromEntries((['F', 'B', 'E'] as View[]).map((v) => [`phones.${v}`, PHONES[v]])),
   arm_l: ARM_L,
   arm_r: ARM_R,
-  arm_e: ARM_E
+  arm_e: ARM_E,
+  arm_e_sit: ARM_E_SIT
 }
 
 export const OUTFIT_MAPS: Record<string, PixMap> = Object.fromEntries(

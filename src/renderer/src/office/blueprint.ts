@@ -35,6 +35,57 @@ export const PM_W = 14
 export const DESK_COLS = 4
 export const DESK_ROWS = 4
 
+/** Grid directions: N is −y, S is +y, E is +x, W is −x (on screen: up-right, down-left, down-right, up-left). */
+export type Dir = 'N' | 'S' | 'E' | 'W'
+export const DIR_VEC: Record<Dir, { x: number; y: number }> = { N: { x: 0, y: -1 }, S: { x: 0, y: 1 }, E: { x: 1, y: 0 }, W: { x: -1, y: 0 } }
+export const OPPOSITE: Record<Dir, Dir> = { N: 'S', S: 'N', E: 'W', W: 'E' }
+
+/**
+ * A staff workstation: the tile of the chair, the way the person in it looks and the tile one steps on to talk to them. The
+ * desk is the tile in front of the chair (chair + `face`), so the desk, the chair and the person always agree. Local to the
+ * room, west-wing orientation (the east wing is mirrored, which also turns E into W).
+ *
+ *        x1 x2 x3 x4 x5 x6 x7 x8        S/N pods (columns x = 1 and x = 3): two desks back to back, a chair at each end,
+ *   y 1  S  .  S  E  d  d  W  .         the people look at each other across the desks.
+ *   y 2  d  .  d  .  .  .  .  .         E/W benches (x = 4..7, rows 1, 3, 5, 7): two desks side by side, a chair at each end.
+ *   y 3  d  .  d  E  d  d  W  .         Column x = 2 is the aisle of the pods, rows 2, 4, 6, 8 are the aisles of the benches
+ *   y 4  N  .  N  .  .  .  .  .         and column x = 8 stays free: the doors between rooms open onto it.
+ *   y 5  S  .  S  E  d  d  W  .
+ *   y 6  d  .  d  .  .  .  .  .         The first four slots already look in four different directions; slots fill pod by
+ *   y 7  d  .  d  E  d  d  W  .         pod and never move once placed.
+ *   y 8  N  .  N  .  .  .  .  .
+ */
+export interface DeskSlot {
+  x: number
+  y: number
+  face: Dir
+  approach: { x: number; y: number }
+}
+
+export const DESK_SLOTS: DeskSlot[] = [
+  // pod A: the first column, nearest the entry row
+  { x: 1, y: 8, face: 'N', approach: { x: 2, y: 8 } },
+  { x: 1, y: 5, face: 'S', approach: { x: 2, y: 5 } },
+  // bench B
+  { x: 4, y: 7, face: 'E', approach: { x: 4, y: 8 } },
+  { x: 7, y: 7, face: 'W', approach: { x: 7, y: 8 } },
+  // pod C: the second column
+  { x: 3, y: 8, face: 'N', approach: { x: 2, y: 8 } },
+  { x: 3, y: 5, face: 'S', approach: { x: 2, y: 5 } },
+  // bench D
+  { x: 4, y: 5, face: 'E', approach: { x: 4, y: 6 } },
+  { x: 7, y: 5, face: 'W', approach: { x: 7, y: 6 } },
+  // pod E, F, bench F, bench G: the same again two desks further from the entry
+  { x: 1, y: 4, face: 'N', approach: { x: 2, y: 4 } },
+  { x: 1, y: 1, face: 'S', approach: { x: 2, y: 1 } },
+  { x: 4, y: 3, face: 'E', approach: { x: 4, y: 4 } },
+  { x: 7, y: 3, face: 'W', approach: { x: 7, y: 4 } },
+  { x: 3, y: 4, face: 'N', approach: { x: 2, y: 4 } },
+  { x: 3, y: 1, face: 'S', approach: { x: 2, y: 1 } },
+  { x: 4, y: 1, face: 'E', approach: { x: 4, y: 2 } },
+  { x: 7, y: 1, face: 'W', approach: { x: 7, y: 2 } }
+]
+
 export type FeatureKind =
   | 'board'
   | 'screen'
@@ -67,8 +118,10 @@ export interface Feature {
   y: number
   w: number
   h: number
-  /** A workstation: a chair on the tile south of the desk. */
+  /** A workstation: it has a chair. */
   chair?: boolean
+  /** The way the person at a workstation looks (default N, so the chair is on the tile south of the desk). The chair is on the opposite side of the desk. */
+  face?: Dir
 }
 
 export interface RoomSpec {
@@ -247,7 +300,16 @@ export const ROOMS: RoomSpec[] = [
       ...ring('discussion-seating', 25, 20, 2, 2),
       hub('discussion-sofa', 'sofa', 28, 19, 1, 2),
       hub('discussion-sofa', 'sofa', 28, 21, 1, 2),
-      ...[14, 16, 18, 23, 25, 27].map((x) => hub('common-workstation', 'station', x, 26, 1, 1, { chair: true, content: 'pm' })),
+      ...(
+        [
+          [14, 'E'],
+          [16, 'N'],
+          [18, 'W'],
+          [23, 'E'],
+          [25, 'S'],
+          [27, 'W']
+        ] as Array<[number, Dir]>
+      ).map(([x, face]) => hub('common-workstation', 'station', x, 26, 1, 1, { chair: true, face, content: 'pm' })),
       hub('water-cooler', 'cooler', 14, 29),
       hub('vending-machine', 'vending', 27, 29),
       hub('plant', 'plant', 12, 1),

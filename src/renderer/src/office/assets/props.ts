@@ -22,6 +22,21 @@ export function monitorRows(inner: string[]): string[] {
   return rows
 }
 
+/** The back of a monitor (for a desk whose person looks away from the camera): a plain shell, with a small light that shows it is on. */
+export function monitorBackRows(iw: number, ih: number, on: boolean): string[] {
+  const W = iw + 4
+  const mid = Math.floor(W / 2)
+  const rows: string[] = ['k'.repeat(W), `k${'j'.repeat(W - 2)}k`]
+  for (let r = 0; r < ih; r++) rows.push(`k${'j'.repeat(W - 2)}k`)
+  const badge = rows[2 + (ih >> 1)]
+  rows[2 + (ih >> 1)] = `${badge.slice(0, mid - 1)}ihi${badge.slice(mid + 2)}`
+  rows.push(`k${'l'.repeat(W - 3)}${on ? 'e' : 'l'}k`)
+  rows.push('k'.repeat(W))
+  rows.push('.'.repeat(mid - 1) + 'kjk' + '.'.repeat(W - mid - 2))
+  rows.push('.'.repeat(mid - 2) + 'kjjjk' + '.'.repeat(W - mid - 3))
+  return rows
+}
+
 const fill = (w: number, h: number, ch: string): string[] => Array.from({ length: h }, () => ch.repeat(w))
 const setAt = (rows: string[], x: number, y: number, ch: string): void => {
   if (y < 0 || y >= rows.length || x < 0 || x >= rows[y].length) return
