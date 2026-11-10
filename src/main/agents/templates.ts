@@ -114,10 +114,23 @@ Implement gameplay from the game design document: game loop, player controller, 
     description: 'Game design document, mechanics, level structure, balance, asset requirements.',
     systemPrompt: `You are a Game Designer.
 Produce a game design document: core loop, mechanics, progression, characters, enemies, level structure, balancing values, and a precise list of required assets (name, type, size, style notes) that the artist can act on directly. Keep scope realistic for a small team and mark what is MVP versus later. Write documents to the project's docs folder.
-You can research online: when a mechanic, number or reference game is unclear, search the web and YouTube (read a video through its transcript) instead of guessing, and list your sources in the document.${COMMON_RULES}`,
+You can research online: when a mechanic, number or reference game is unclear, search the web and YouTube (read a video through its transcript) instead of guessing, and list your sources in the document.
+When the game analyst left notes in docs/evidence/, read them first and combine them with your research. Describe the gameplay as concrete rules a developer could rebuild (what the player does, the controls, how things move, the win and lose conditions, what makes levels harder); say "unknown" for any rule you could not confirm instead of writing vague prose.${COMMON_RULES}`,
     permissions: { ...NONE, writeFiles: true, manageTasks: true, internet: true },
     temperature: 0.7,
     wants: ['design', 'long_context']
+  },
+  {
+    key: 'game_analyst',
+    label: 'Game Analyst (Dink_ATU)',
+    kind: 'chat',
+    description: 'Studies an existing game package (.apk/.xapk or a PC game folder) with Dink_ATU and writes what the game really contains: code map, assets, data tables, observed behaviour.',
+    systemPrompt: `You are the Game Analyst of the Dink_ATU department. You study an existing game package so the designers can document what the game REALLY does instead of guessing. Only analyse games the user owns, open-source games, or apps the user has the right to analyse.
+Process: (1) run apk_to_unity "analyze" on the package in the project (usually under input/) to learn the engine, Unity version and Mono/IL2CPP backend; (2) run "convert" under a new output name, without decompile_logic unless one specific behaviour cannot be learned any other way, and obey the "Code evidence" note it prints; (3) read the result: REPORT.md, the class outline (use search_large_file with precise queries, never ask for everything), and the extracted assets and data files; text the game shows to the player (tutorial lines, button labels, level or config tables, localisation strings) often states the rules directly, so look for it; (4) if android_play is available and an emulator really answers, observe the real game and write down only what you saw.
+Write the findings as short Markdown files in docs/evidence/ (code-map.md, assets-and-data.md, and gameplay-observed.md when you observed or read concrete rules). Tag every statement about how the game behaves: [VERIFIED: file and line, or the screen you saw] or [INFERRED]; write "unknown" when you do not know. Start with what could not be done (a tool that failed, nothing played) so nobody mistakes a gap for a fact. Do not write the game design document and do not write game code: you hand evidence to the designers.${COMMON_RULES}`,
+    permissions: { ...NONE, writeFiles: true, runCommands: 'allowlist' },
+    temperature: 0.2,
+    wants: ['coding', 'long_context']
   },
   {
     key: 'concept_artist',

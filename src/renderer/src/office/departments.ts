@@ -27,7 +27,7 @@ export const DEPARTMENTS: Department[] = [
   { id: 'audio', short: 'AUDIO', label: 'Sound Design', color: '#3cc4b5', floor: ['#27474a', '#213e41'], band: 'top', roles: [], props: 'audio' },
   { id: 'dev', short: 'DEV', label: 'Programming', color: '#5b9bf0', floor: ['#2c3f5b', '#263851'], band: 'bottom', roles: ['lead_developer', 'backend_developer', 'frontend_developer', 'game_developer', 'technical_architect'], props: 'dev' },
   { id: 'qa', short: 'QA', label: 'Quality Assurance', color: '#e5675d', floor: ['#4d3032', '#442a2c'], band: 'bottom', roles: ['qa_tester', 'code_reviewer'], props: 'qa' },
-  { id: 'integration', short: 'INTEG', label: 'Integration & Build', color: '#9aa4b2', floor: ['#3b4047', '#343940'], band: 'bottom', roles: [], props: 'integration' }
+  { id: 'integration', short: 'INTEG', label: 'Integration & Dink_ATU', color: '#9aa4b2', floor: ['#3b4047', '#343940'], band: 'bottom', roles: ['game_analyst'], props: 'integration' }
 ]
 
 export const DEPT: Record<DeptId, Department> = Object.fromEntries(DEPARTMENTS.map((d) => [d.id, d])) as Record<DeptId, Department>

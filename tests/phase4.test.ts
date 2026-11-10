@@ -70,8 +70,8 @@ describe('permissions', () => {
 })
 
 describe('AgentService create', () => {
-  it('lists the 12 templates', () => {
-    expect(agents.templates()).toHaveLength(12)
+  it('lists the every template', () => {
+    expect(agents.templates()).toHaveLength(AGENT_TEMPLATES.length)
   })
 
   it('copies a template into an editable agent', () => {
@@ -224,8 +224,8 @@ describe('createTeam', () => {
   it('creates one agent per template and is idempotent', () => {
     addProject('p1')
     const first = agents.createTeam('p1')
-    expect(first).toHaveLength(12)
-    expect(new Set(first.map((a) => a.role)).size).toBe(12)
+    expect(first).toHaveLength(AGENT_TEMPLATES.length)
+    expect(new Set(first.map((a) => a.role)).size).toBe(AGENT_TEMPLATES.length)
     expect(first.every((a) => a.projectId === 'p1')).toBe(true)
     expect(agents.createTeam('p1')).toEqual([])
   })
@@ -234,14 +234,14 @@ describe('createTeam', () => {
     addProject('p1')
     const dev = agents.create({ templateKey: 'lead_developer', projectId: 'p1', name: 'Ada' })
     const added = agents.createTeam('p1')
-    expect(added).toHaveLength(11)
+    expect(added).toHaveLength(AGENT_TEMPLATES.length - 1)
     expect(added.some((a) => a.role === 'lead_developer')).toBe(false)
     expect(agents.get(dev.id)!.name).toBe('Ada')
   })
 
   it('rejects an unknown project and is atomic with the library scope', () => {
     expect(() => agents.createTeam('missing')).toThrow(/Project not found/)
-    expect(agents.createTeam(null)).toHaveLength(12)
+    expect(agents.createTeam(null)).toHaveLength(AGENT_TEMPLATES.length)
   })
 })
 

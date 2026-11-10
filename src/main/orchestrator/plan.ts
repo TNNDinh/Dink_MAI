@@ -193,6 +193,9 @@ export function plannerInstructions(opts: { projectName: string; projectType: st
   const playRule = opts.canPlay
     ? '\n- The team can play Android games in an emulator (android_play). When the goal is to document or rebuild an existing game whose behaviour cannot be read from real C# source (an IL2CPP game gives only class names), plan a play-test task for a role that can run commands BEFORE the task that writes the design document, and make the design task depend on it. The play-test task installs and launches the game, plays the main loop and the first minutes of progression, and writes what it SAW (screens, controls, rules, numbers on screen) to docs/playtest-notes.md. The design document then uses those notes as its VERIFIED source. If the game was never played, the document must say so at the top.'
     : ''
+  const analystRule = opts.team.some((m) => m.role === 'game_analyst')
+    ? '\n- The team has a game_analyst (Dink_ATU department). When the goal is to document an existing game and a game package (.apk/.xapk/.apks or a PC game folder) is in the project, plan ONE task for the game_analyst that runs Dink_ATU on the package (apk_to_unity analyze, then convert) and writes what it found under docs/evidence/ (code map, assets and data, and what was observed when the game could be played). The designer task that writes the design document must depend on it: it reads docs/evidence/ AND researches online (when it can), and states the gameplay as concrete rules with the source of each statement. Do not give the analyst design work, and do not give the designer package analysis. Without a package in the project, plan no analyst task.'
+    : ''
   const n = opts.developerCount ?? 1
   const staffing =
     n >= 2
@@ -215,6 +218,6 @@ Guidelines:
 - Order the work like a real team: design and architecture first; art/asset work in parallel with implementation when the roles exist; then integration; then a code review task; then a QA/testing task; a final task that summarises the result. Skip stages for which the team has no role.
 - Use depends_on so a task starts only when what it needs exists. Tasks without dependencies start immediately and may run in parallel.
 - A reviewer or QA task must depend on the implementation it checks. They can send work back for changes, so do not plan separate "fix" tasks.
-- Do not assign work to roles that are not in the team list.${imageRule}${playRule}${devRule}
+- Do not assign work to roles that are not in the team list.${imageRule}${playRule}${analystRule}${devRule}
 Call submit_plan once.`
 }
