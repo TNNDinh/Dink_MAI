@@ -30,6 +30,9 @@ const BINARY_EXT = new Set([
   'ttf', 'otf', 'woff', 'woff2', 'eot', 'pdf', 'fbx', 'blend', 'glb', 'bin', 'dat', 'db', 'sqlite', 'unitypackage', 'asset', 'prefab', 'meta'
 ])
 
+/** Extensions on the binary list that are YAML text in an exported Unity project. */
+const UNITY_TEXT_EXT: ReadonlySet<string> = new Set(['asset', 'prefab'])
+
 export const MAX_READ_BYTES = 1_000_000
 export const MAX_WRITE_BYTES = 2_000_000
 /** Images and other binary assets. */
@@ -299,7 +302,7 @@ export class Sandbox {
   }
 
   /** Every non-ignored text-like file under `rel`, depth-first. */
-  async walk(rel = '', opts: { max?: number; includeBinary?: boolean; maxFileBytes?: number } = {}): Promise<{ files: WalkedFile[]; truncated: boolean }> {
+  async walk(rel = '', opts: { max?: number; includeBinary?: boolean; maxFileBytes?: number; alsoText?: ReadonlySet<string> } = {}): Promise<{ files: WalkedFile[]; truncated: boolean }> {
     const max = opts.max ?? MAX_WALK_FILES
     const maxFileBytes = opts.maxFileBytes ?? MAX_READ_BYTES
     const files: WalkedFile[] = []
@@ -320,7 +323,7 @@ export class Sandbox {
         if (d.isDirectory()) {
           if (!IGNORED_DIRS.has(d.name)) await visit(childRel, join(fullDir, d.name))
         } else if (d.isFile()) {
-          if (!opts.includeBinary && isBinaryExt(d.name)) continue
+          if (!opts.includeBinary && isBinaryExt(d.name) && !opts.alsoText?.has(d.name.slice(d.name.lastIndexOf('.') + 1).toLowerCase())) continue
           let st
           try {
             st = await fsp.stat(join(fullDir, d.name))
@@ -351,7 +354,9 @@ export class Sandbox {
       throw new WorkspaceError('That is not a valid regular expression.', 'invalid')
     }
     const max = opts.maxResults ?? 60
-    const { files } = await this.walk(opts.path ?? '', { maxFileBytes: 512_000 })
+    // Unity writes its scenes' data and its localisation tables as YAML text in .asset and .prefab files. They are on the binary list
+    // (the file index would drown in them), but a search must see them; a real binary one is still skipped by the NUL check below.
+    const { files } = await this.walk(opts.path ?? '', { maxFileBytes: 512_000, alsoText: UNITY_TEXT_EXT })
     const hits: SearchHit[] = []
     let scanned = 0
     let truncated = false

@@ -27,6 +27,13 @@ export const RESEARCH_TOOL_ROUNDS = 24
 /** How many tool rounds a task may use, given the tools its agent has. */
 export const toolRoundsFor = (toolNames: { has(name: string): boolean }): number =>
   toolNames.has('android_play') ? PLAY_TOOL_ROUNDS : toolNames.has('web_search') || toolNames.has('youtube_video') ? RESEARCH_TOOL_ROUNDS : MAX_TOOL_ROUNDS
+/**
+ * How much of the older tool results an agent keeps. An analyst reads many files and writes its notes afterwards, so
+ * results shortened to 400 characters make it read the same file again (a Unity .asset has 400 characters of header before the
+ * first text): it keeps more of them.
+ */
+export const trimPolicyFor = (toolNames: { has(name: string): boolean }): { keep?: number; head?: number } =>
+  toolNames.has('apk_to_unity') ? { keep: 6, head: 1500 } : {}
 /** True when a reply still holds tool-call markup (an unreadable call, or an empty list written after one): it is not a final report. */
 export const leftoverToolMarkup = (text: string): boolean => /<(?:[\w-]+:)?(?:invoke|function_calls)\b|```\s*tool_calls/.test(text)
 export const MAX_PLAN_ROUNDS = 3
@@ -831,7 +838,8 @@ If you must change any other file, read it first and use edit_file with a small 
       messages.push({ role: 'user', content: [...results, ...pictures, ...nudge] })
       dropOldImages(messages)
       // The whole conversation is sent again every round: shorten the old tool results so the cost does not grow with the square of the length.
-      trimOldToolResults(messages)
+      const policy = trimPolicyFor(available)
+      trimOldToolResults(messages, policy.keep, policy.head)
     }
     throw new ToolRoundsExhausted(`The agent did not finish within ${maxRounds} tool rounds.`)
   }

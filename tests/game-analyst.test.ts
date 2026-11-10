@@ -1,5 +1,10 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AGENT_TEMPLATES, getTemplate } from '../src/main/agents/templates'
+import { trimPolicyFor } from '../src/main/orchestrator/orchestrator'
+import { Sandbox } from '../src/main/workspace/sandbox'
 import { plannerInstructions, type TeamMember } from '../src/main/orchestrator/plan'
 import { toolsFor } from '../src/main/orchestrator/tools'
 import { DEPARTMENTS, departmentOfRole, departmentOfTask } from '../src/renderer/src/office/departments'
@@ -36,6 +41,29 @@ describe('the Game Analyst of the Dink_ATU department', () => {
     expect(withAnalyst).toMatch(/must depend on both/)
     expect(withAnalyst).toMatch(/docs\/evidence\//)
     expect(plannerInstructions({ ...base, team: [member('project_manager'), member('game_designer')] })).not.toMatch(/Dink_ATU department/)
+  })
+
+  it('search_files reads the YAML .asset/.prefab files of an exported Unity project, but still skips a binary one and the .meta files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'unity-search-'))
+    try {
+      mkdirSync(join(root, 'Assets', 'Localization'), { recursive: true })
+      writeFileSync(join(root, 'Assets', 'Localization', 'Gameplay_en.asset'), '%YAML 1.1\n  m_Localized: Level {0}\n')
+      writeFileSync(join(root, 'Assets', 'Localization', 'Gameplay_en.asset.meta'), 'm_Localized: not here\n')
+      writeFileSync(join(root, 'Assets', 'Binary.asset'), Buffer.from([0x55, 0x6e, 0x69, 0x00, 0x6d, 0x5f, 0x4c, 0x6f, 0x63, 0x61, 0x6c, 0x69, 0x7a, 0x65, 0x64, 0x3a]))
+      const sb = new Sandbox(root)
+      const r = await sb.search('m_Localized:')
+      expect(r.hits.map((h) => `${h.path}:${h.line}`)).toEqual(['Assets/Localization/Gameplay_en.asset:2'])
+      // The file index still leaves these extensions out: every Unity file has a .meta, they would drown it.
+      expect((await sb.walk('')).files).toEqual([])
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it('an agent that reads many files keeps more of its older tool results than the others', () => {
+    const analyst = new Set(['apk_to_unity', 'read_file'])
+    expect(trimPolicyFor(analyst)).toEqual({ keep: 6, head: 1500 })
+    expect(trimPolicyFor(new Set(['read_file']))).toEqual({})
   })
 
   it('the designer is told to read the analyst notes and to write gameplay as concrete rules', () => {
