@@ -30,10 +30,10 @@ describe('the Game Analyst of the Dink_ATU department', () => {
     expect(DEPARTMENTS.find((d) => d.id === 'integration')!.label).toMatch(/Dink_ATU/)
   })
 
-  it('the planner is told to run the analyst first and to make the designer wait for it, only when the team has an analyst', () => {
+  it('the planner is told to split the analyst work in two small tasks and to make the designer wait for both, only when the team has an analyst', () => {
     const withAnalyst = plannerInstructions({ ...base, team: [member('project_manager'), member('game_analyst'), member('game_designer')] })
     expect(withAnalyst).toMatch(/game_analyst \(Dink_ATU department\)/)
-    expect(withAnalyst).toMatch(/must depend on it/)
+    expect(withAnalyst).toMatch(/must depend on both/)
     expect(withAnalyst).toMatch(/docs\/evidence\//)
     expect(plannerInstructions({ ...base, team: [member('project_manager'), member('game_designer')] })).not.toMatch(/Dink_ATU department/)
   })
