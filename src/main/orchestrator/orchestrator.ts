@@ -34,6 +34,17 @@ export const toolRoundsFor = (toolNames: { has(name: string): boolean }): number
  */
 export const trimPolicyFor = (toolNames: { has(name: string): boolean }): { keep?: number; head?: number } =>
   toolNames.has('apk_to_unity') ? { keep: 6, head: 1500 } : {}
+/**
+ * After how many tool rounds without a written file an agent is told to write now (0 = never). The analyst's result IS its files, yet
+ * a model that keeps finding one more thing to look at spends the whole task limit reading: a reminder in the prompt was not enough.
+ */
+export const writeNudgeRound = (toolNames: { has(name: string): boolean }): number => (toolNames.has('apk_to_unity') ? 5 : 0)
+export const WRITE_TOOLS: ReadonlySet<string> = new Set(['write_file', 'edit_file'])
+/** The reminder for round `round` (a tool round that just ended), or null. It is repeated every 3 rounds while nothing is written. */
+export function writeNudge(round: number, firstAt: number, wroteFile: boolean): string | null {
+  if (firstAt <= 0 || wroteFile || round < firstAt || (round - firstAt) % 3 !== 0) return null
+  return `You have used ${round} tool rounds and written no file yet, but your result is a file. In your next reply call write_file with what you already know (a partial file is fine: mark what you do not know as "unknown"), then keep improving it with edit_file. Do not start another round of reading first.`
+}
 /** True when a reply still holds tool-call markup (an unreadable call, or an empty list written after one): it is not a final report. */
 export const leftoverToolMarkup = (text: string): boolean => /<(?:[\w-]+:)?(?:invoke|function_calls)\b|```\s*tool_calls/.test(text)
 export const MAX_PLAN_ROUNDS = 3
@@ -769,6 +780,7 @@ If you must change any other file, read it first and use edit_file with a small 
     log('user', prompt)
     const ctx: ToolContext = { db: this.db, events: this.events, tasks: this.tasks, agent, projectId: run.project_id, runId: run.id, taskId: task.id, state, workspace: this.workspace?.workspace, commands: this.workspace?.commands, assets: this.assets() ?? undefined, imageTarget: this.imageTarget(run.project_id), signal, canSeeImages: this.canSeeImages(agent) }
     let usedTools = false
+    let wroteFile = false
     const maxRounds = toolRoundsFor(available)
     for (let round = 1; round <= maxRounds; round++) {
       if (signal.aborted) throw new CallCancelledError()
@@ -828,13 +840,17 @@ If you must change any other file, read it first and use edit_file with a small 
       const results: ToolResultPart[] = []
       const pictures: ImagePart[] = []
       for (const call of response.toolCalls) results.push(await this.runTool(call, available, ctx, log, pictures))
+      if (response.toolCalls.some((c) => WRITE_TOOLS.has(c.name))) wroteFile = true
       if (step?.mustCall?.satisfied()) return clip(response.text.trim() || 'Submitted.', MAX_RESULT_CHARS)
       // Close to the limit, say so: an agent that knows it is nearly out of rounds writes its report instead of exploring.
       const left = maxRounds - round
+      const writeNow = !step?.mustCall && available.has('write_file') ? writeNudge(round, writeNudgeRound(available), wroteFile) : null
       const nudge: ContentPart[] =
         !step?.mustCall && left <= 2
           ? [{ type: 'text', text: left === 1 ? 'This was your second-to-last round. Your next reply must be your final written report: you will have no tools. Say plainly what you finished and what you did not.' : 'You have 2 tool rounds left, then no more tools. Stop exploring: finish only what is essential, then write the final report.' }]
-          : []
+          : writeNow
+            ? [{ type: 'text', text: writeNow }]
+            : []
       messages.push({ role: 'user', content: [...results, ...pictures, ...nudge] })
       dropOldImages(messages)
       // The whole conversation is sent again every round: shorten the old tool results so the cost does not grow with the square of the length.

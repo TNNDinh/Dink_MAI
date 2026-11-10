@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { AGENT_TEMPLATES, getTemplate } from '../src/main/agents/templates'
-import { trimPolicyFor } from '../src/main/orchestrator/orchestrator'
+import { trimPolicyFor, WRITE_TOOLS, writeNudge, writeNudgeRound } from '../src/main/orchestrator/orchestrator'
 import { Sandbox } from '../src/main/workspace/sandbox'
 import { plannerInstructions, type TeamMember } from '../src/main/orchestrator/plan'
 import { toolsFor } from '../src/main/orchestrator/tools'
@@ -64,6 +64,19 @@ describe('the Game Analyst of the Dink_ATU department', () => {
     const analyst = new Set(['apk_to_unity', 'read_file'])
     expect(trimPolicyFor(analyst)).toEqual({ keep: 6, head: 1500 })
     expect(trimPolicyFor(new Set(['read_file']))).toEqual({})
+  })
+
+  it('an analyst that has read for 5 rounds without writing a file is told to write now, again every 3 rounds, and never once it wrote', () => {
+    const first = writeNudgeRound(new Set(['apk_to_unity']))
+    expect(first).toBe(5)
+    expect(writeNudgeRound(new Set(['write_file']))).toBe(0)
+    expect([1, 2, 3, 4].map((r) => writeNudge(r, first, false))).toEqual([null, null, null, null])
+    expect(writeNudge(5, first, false)).toMatch(/call write_file/)
+    expect([6, 7].map((r) => writeNudge(r, first, false))).toEqual([null, null])
+    expect(writeNudge(8, first, false)).not.toBeNull()
+    expect(writeNudge(5, first, true)).toBeNull()
+    expect(writeNudge(9, 0, false)).toBeNull()
+    expect(WRITE_TOOLS.has('write_file') && WRITE_TOOLS.has('edit_file') && !WRITE_TOOLS.has('read_file')).toBe(true)
   })
 
   it('the designer is told to read the analyst notes and to write gameplay as concrete rules', () => {
