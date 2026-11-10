@@ -38,7 +38,7 @@ describe('office character sprites', () => {
   })
 
   it('frames come out at one size and nothing is left outside the palette', () => {
-    for (const view of ['F', 'B', 'E'] as View[]) {
+    for (const view of ['F', 'B', 'E', 'FD', 'BD'] as View[]) {
       for (const pose of ['stand', 'walk', 'sit'] as const) {
         for (let frame = 0; frame < 4; frame++) {
           const { map, pal } = personMap(LOOKS[1], 'dev', '#5b9bf0', 'staff', { view, pose, frame })
@@ -54,7 +54,7 @@ describe('office character sprites', () => {
     const depts: Array<[string, string, 'staff' | 'pm']> = [['dev', '#5b9bf0', 'staff'], ['art', '#ee8a4c', 'staff'], ['audio', '#3cc4b5', 'staff'], ['qa', '#e5675d', 'staff'], ['gd', '#a66be6', 'staff'], ['pm', '#e0b341', 'pm']]
     depts.forEach(([dept, color, role], k) => {
       const look = LOOKS[k % LOOKS.length]
-      for (const view of ['F', 'B', 'E'] as View[]) {
+      for (const view of ['F', 'B', 'E', 'FD', 'BD'] as View[]) {
         for (const [pose, frame] of [['stand', 0], ['walk', 1], ['walk', 3], ['sit', 0]] as const) {
           const { map, pal } = personMap(look, dept, color, role, { view, pose, frame })
           items.push({ name: `${dept}.${view}.${pose}${frame}`, map, pal })
@@ -62,7 +62,7 @@ describe('office character sprites', () => {
       }
     })
     mkdirSync(out!, { recursive: true })
-    writeFileSync(join(out!, 'people.png'), sheet(items, { cols: 12, scale: 4 }))
+    writeFileSync(join(out!, 'people.png'), sheet(items, { cols: 20, scale: 4 }))
   })
 })
 

@@ -71,17 +71,22 @@ export const PM_LOOK: Look = { skin: 1, hair: 4, style: 0, glasses: true, pants:
 
 export type Facing = 'N' | 'S' | 'E' | 'W'
 
-/** Which drawing of a person to use for the direction they face: seen from the front, the back or the side (west is the east drawing mirrored). */
+/**
+ * Which drawing of a person to use for the direction they face. On the isometric grid the four directions are the diagonals of
+ * the screen (east: down-right, south: down-left, north: up-right, west: up-left), so those are the drawings: toward the camera
+ * and to the right (east), toward the camera and to the left (south), away and to the right (north), away and to the left
+ * (west). The left-hand ones are the pixel-map mirror of the right-hand ones.
+ */
 export const viewOf = (dir: Facing): { view: CharView; flip: boolean } => {
   switch (dir) {
-    case 'S':
-      return { view: 'F', flip: false }
-    case 'N':
-      return { view: 'B', flip: false }
     case 'E':
-      return { view: 'E', flip: false }
+      return { view: 'FD', flip: false }
+    case 'S':
+      return { view: 'FD', flip: true }
+    case 'N':
+      return { view: 'BD', flip: false }
     default:
-      return { view: 'E', flip: true }
+      return { view: 'BD', flip: true }
   }
 }
 
