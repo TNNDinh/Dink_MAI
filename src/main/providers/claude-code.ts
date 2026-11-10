@@ -187,7 +187,8 @@ export function closeMissingBrackets(raw: string): string {
 }
 
 export function parseToolCalls(text: string, idPrefix: string, tools?: ToolDefinition[]): { text: string; calls: ToolCall[] } {
-  const fenced = /```(?:tool_calls|json)?\s*\n?(\[[\s\S]*?\])\s*```/.exec(text)
+  // The array may end in "}" when the model forgot the outer "]"; closeMissingBrackets repairs that below.
+  const fenced = /```(?:tool_calls|json)?\s*\n?(\[[\s\S]*?[\]}])\s*```/.exec(text)
   // Models sometimes drop the opening or the closing fence around the array.
   const bare = /^\s*(?:```(?:tool_calls|json)?\s*)?(\[\s*\{[\s\S]*\}\s*\])\s*(?:```)?\s*$/.exec(text)
   const raw = fenced ? fenced[1] : bare?.[1]

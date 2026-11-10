@@ -285,6 +285,15 @@ describe('parseToolCalls with a block that ends short of closing brackets', () =
     expect(r.calls[0].arguments).toEqual({ tasks: [{ key: 'a', title: 'Say "hi" {x}', description: 'line\nwith ] and } inside', depends_on: ['b'] }] })
   })
 
+  it('adds the outer "]" when the block ends in "}" (real planner reply for the Parking Loop run)', () => {
+    const noOuter = whole.slice(0, -1) // drops only the final "]"
+    expect(() => JSON.parse(noOuter)).toThrow()
+    const r = parseToolCalls(`\`\`\`tool_calls\n${noOuter}\n\`\`\``, 'x')
+    expect(r.calls).toHaveLength(1)
+    expect(r.calls[0].name).toBe('submit_plan')
+    expect(r.text).toBe('')
+  })
+
   it('does not guess when the damage is anything else', () => {
     expect(closeMissingBrackets('[{"a":1}')).toBe('[{"a":1}]')
     expect(closeMissingBrackets('[{"a":"unterminated}')).toBe('[{"a":"unterminated}')
