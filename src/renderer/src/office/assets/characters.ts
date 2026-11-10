@@ -128,6 +128,9 @@ const ARM_E: PixMap = m('Sk', 'Tk', 'Tk', 'Tk', 'sk', 'tk')
 const ARM_E_SIT: PixMap = m('Sk..', 'TTTk', '.sst')
 /** Seated at the keyboard, seen from the front or the back: the forearms are forward, so only a short stub shows. */
 const ARM_L_SIT: PixMap = m('kS', 'kT', 'ks')
+/** Seated at the keyboard and turned to the right on the diagonal: the forearm reaches out to the desk, down to the right when seen from the front and up to the right when seen from behind. */
+const ARM_FD_SIT: PixMap = m('Sk..', 'TTTk', '.sst')
+const ARM_BD_SIT: PixMap = m('.sst', 'TTTk', 'Sk..')
 const ARM_R_SIT: PixMap = m('Uk', 'Uk', 'tk')
 
 const LEGS_F: PixMap[] = [
@@ -187,6 +190,12 @@ export function personMap(look: Look, dept: string, accent: string, role: 'staff
   if (outfit) layers.push({ map: outfit, pal: { ...pal, ...accentPal(accent) }, x: TORSO_X, y: TORSO_Y })
   if (body === 'E') {
     layers.push({ map: sit ? ARM_E_SIT : ARM_E, pal, x: TORSO_X + 3, y: TORSO_Y + 2 + (sit ? typing : swing - 1) })
+  } else if (sit && view === 'FD') {
+    layers.push({ map: ARM_L_SIT, pal, x: TORSO_X - 2, y: TORSO_Y + 1 - typing })
+    layers.push({ map: ARM_FD_SIT, pal, x: TORSO_X + 5, y: TORSO_Y + 2 + typing })
+  } else if (sit && view === 'BD') {
+    layers.push({ map: ARM_L_SIT, pal, x: TORSO_X - 2, y: TORSO_Y + 1 - typing })
+    layers.push({ map: ARM_BD_SIT, pal, x: TORSO_X + 6, y: TORSO_Y + 1 - typing })
   } else if (sit) {
     layers.push({ map: ARM_L_SIT, pal, x: TORSO_X - 2, y: TORSO_Y + 1 - typing })
     layers.push({ map: ARM_R_SIT, pal, x: TORSO_X + 8, y: TORSO_Y + 1 + typing - 1 })
@@ -239,7 +248,9 @@ export const CHARACTER_MAPS: Record<string, PixMap> = {
   arm_l: ARM_L,
   arm_r: ARM_R,
   arm_e: ARM_E,
-  arm_e_sit: ARM_E_SIT
+  arm_e_sit: ARM_E_SIT,
+  arm_fd_sit: ARM_FD_SIT,
+  arm_bd_sit: ARM_BD_SIT
 }
 
 export const OUTFIT_MAPS: Record<string, PixMap> = Object.fromEntries(
