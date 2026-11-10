@@ -410,7 +410,7 @@ export async function runSmokeTest(opts: {
       const issues = await js<string>(`document.querySelector('[data-agent-issues]')?.innerText ?? ''`)
       if (!/No model connection selected/.test(issues)) throw new Error(`expected a readiness warning, got: ${issues}`)
       const [a] = await agentList()
-      if (a.name !== 'Game Designer' || a.systemPrompt.length < 50 || a.permissions.runCommands !== 'none' || a.permissions.internet !== false || a.permissions.gitCommit !== false) throw new Error(`template not applied: ${JSON.stringify(a)}`)
+      if (a.name !== 'Game Designer' || a.systemPrompt.length < 50 || a.permissions.runCommands !== 'none' || a.permissions.internet !== true || a.permissions.gitCommit !== false) throw new Error(`template not applied: ${JSON.stringify(a)}`)
       return `created from template; readiness warning: ${issues}`
     })
     await shot('16-agent-needs-setup.png')

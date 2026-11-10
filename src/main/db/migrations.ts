@@ -377,5 +377,14 @@ export const MIGRATIONS: Migration[] = [
     -- Opt-in per project: agents' commands that would wait for approval run at once. Blocked commands stay blocked.
     ALTER TABLE projects ADD COLUMN bypass_approvals INTEGER NOT NULL DEFAULT 0;
     `
+  },
+  {
+    version: 8,
+    name: 'game_designer_internet',
+    sql: /* sql */ `
+    -- The Game Designer can now look things up on the web and YouTube. Agents made earlier from that template get the permission once;
+    -- it stays an ordinary toggle in the agent's settings, so turning it off again sticks.
+    UPDATE agents SET permissions_json = json_set(permissions_json, '$.internet', json('true')) WHERE role = 'game_designer' AND json_valid(permissions_json);
+    `
   }
 ]

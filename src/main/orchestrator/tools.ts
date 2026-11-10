@@ -16,6 +16,8 @@ import { ATU_TOOLS } from './atu-tools'
 import { SKILL_TOOLS } from './skill-tools'
 import { UNITY_BRIDGE_TOOLS } from './unity-bridge'
 import { UNITY_TOOLS } from './unity-tools'
+import { WEB_TOOLS } from './web-tools'
+import { YOUTUBE_TOOLS } from './youtube-tools'
 
 export const MEMORY_KINDS = ['decision', 'design_doc', 'convention', 'summary', 'note'] as const
 export const MAX_MEMORY_CONTENT = 60_000
@@ -236,5 +238,6 @@ export const ALL_TOOLS: AgentTool[] = [listTasks, listMemory, readMemory, writeM
 
 /** Tools this agent may use. File and command tools are only offered when the app has a workspace to act on. */
 export function toolsFor(agent: Agent, opts: { workspace?: boolean; assets?: boolean; skills?: boolean } = {}): AgentTool[] {
-  return [...ALL_TOOLS, ...(opts.skills ? SKILL_TOOLS : []), ...(opts.workspace ? [...WORKSPACE_TOOLS, ...GAME_INIT_TOOLS, ...UNITY_TOOLS, ...UNITY_BRIDGE_TOOLS, ...ATU_TOOLS, ...ANDROID_TOOLS, ...BUILD_TOOLS] : []), ...(opts.assets ? ASSET_TOOLS : [])].filter((t) => t.allowed(agent))
+  // The web tools are offered by permission alone (`internet`): they need no project folder, except the video download, which checks its own.
+  return [...ALL_TOOLS, ...WEB_TOOLS, ...YOUTUBE_TOOLS, ...(opts.skills ? SKILL_TOOLS : []),...(opts.workspace ? [...WORKSPACE_TOOLS, ...GAME_INIT_TOOLS, ...UNITY_TOOLS, ...UNITY_BRIDGE_TOOLS, ...ATU_TOOLS, ...ANDROID_TOOLS, ...BUILD_TOOLS] : []), ...(opts.assets ? ASSET_TOOLS : [])].filter((t) => t.allowed(agent))
 }

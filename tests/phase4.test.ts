@@ -50,8 +50,8 @@ describe('migration 2', () => {
 })
 
 describe('permissions', () => {
-  it('every template starts from least privilege and none enables the internet by default', () => {
-    for (const t of AGENT_TEMPLATES) expect(t.permissions.internet, t.key).toBe(false)
+  it('every template starts from least privilege; only the Game Designer, who researches, can go online by default', () => {
+    for (const t of AGENT_TEMPLATES) expect(t.permissions.internet, t.key).toBe(t.key === 'game_designer')
     expect(NO_PERMISSIONS).toMatchObject({ writeFiles: false, runCommands: 'none', internet: false, gitCommit: false })
   })
 
