@@ -98,6 +98,21 @@ describe('office furniture sprites', () => {
     expect(mapSize(CHARACTER_MAPS.arm_e_sit).w).toBeGreaterThan(mapSize(CHARACTER_MAPS.arm_e).w)
   })
 
+  it('seated on the diagonal the body turns with the head: its own chest, thighs forward, both forearms out to the keyboard', () => {
+    for (const view of ['FD', 'BD'] as const) {
+      const sit = personMap(LOOKS[1], 'dev', '#5b9bf0', 'staff', { view, pose: 'sit', frame: 0 })
+      const stand = personMap(LOOKS[1], 'dev', '#5b9bf0', 'staff', { view, pose: 'stand', frame: 0 })
+      expect(JSON.stringify(sit.map.rows)).not.toEqual(JSON.stringify(stand.map.rows))
+      // the typing frames move the forearms
+      const next = personMap(LOOKS[1], 'dev', '#5b9bf0', 'staff', { view, pose: 'sit', frame: 1 })
+      expect(JSON.stringify(next.map.rows)).not.toEqual(JSON.stringify(sit.map.rows))
+    }
+    expect(CHARACTER_MAPS.sit_torso_fd).toBeDefined()
+    expect(CHARACTER_MAPS.sit_torso_bd).toBeDefined()
+    // the thighs run forward: the seated legs of the diagonals are wider than the torso
+    expect(mapSize(CHARACTER_MAPS.sit_legs_fd).w).toBeGreaterThan(mapSize(CHARACTER_MAPS.sit_torso_fd).w)
+  })
+
   it('every studio piece (racks, console, booth, speakers, easel, bench, storage, round table) is a clean pixel map', () => {
     expect(Object.keys(STUDIO_MAPS).sort()).toEqual(['booth', 'console', 'easel', 'rack', 'rack.b', 'round-table', 'speaker', 'storage', 'testbench'])
     for (const [name, m] of Object.entries(STUDIO_MAPS)) {
