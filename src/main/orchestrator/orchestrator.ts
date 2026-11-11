@@ -50,7 +50,7 @@ export const leftoverToolMarkup = (text: string): boolean => /<(?:[\w-]+:)?(?:in
 export const MAX_PLAN_ROUNDS = 3
 export const MAX_ATTEMPTS = 2
 /** Most one task may spend (all its attempts together). A runaway loop stops here instead of at the whole run's budget. */
-export const MAX_TASK_COST_USD = 10
+export const MAX_TASK_COST_USD = 500
 export const DEFAULT_CONCURRENCY = 3
 const MAX_CONCURRENCY = 8
 const MAX_RESULT_CHARS = 20_000
