@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { ActivityEvent, Agent, AgentTemplateInfo, AppInfo, AutomationRun, Connection, PreviewInfo, DashboardStats, PendingApproval, ProviderCatalogItem, Project, Run, Task } from '../../shared/ipc'
 
-export type Page = 'dashboard' | 'projects' | 'workspace' | 'agents' | 'connections' | 'workflow' | 'assets' | 'tasks' | 'source' | 'preview' | 'office' | 'settings'
+export type Page = 'dashboard' | 'projects' | 'workspace' | 'agents' | 'connections' | 'workflow' | 'assets' | 'tasks' | 'source' | 'preview' | 'office' | 'apk' | 'settings'
 export type RightTab = 'activity' | 'chat' | 'tasks' | 'usage'
 export type BottomTab = 'logs' | 'terminal' | 'build' | 'problems' | 'tests'
 

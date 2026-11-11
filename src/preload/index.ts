@@ -1,6 +1,7 @@
-import { contextBridge, ipcRenderer } from 'electron'
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
 import {
   ACTIVITY_CHANNEL,
+  APK_CHANNEL,
   APPROVAL_CHANNEL,
   AUTOMATION_CHANNEL,
   CHAT_CHANNEL,
@@ -9,6 +10,7 @@ import {
   PREVIEW_CHANNEL,
   TERMINAL_CHANNEL,
   type ActivityEvent,
+  type ApkProgress,
   type AutomationRun,
   type ChatStreamEvent,
   type FsChange,
@@ -53,7 +55,9 @@ const api: StudioApi = {
   onApprovalsChanged: (cb) => subscribe<PendingApproval[]>(APPROVAL_CHANNEL, cb),
   onFsChange: (cb) => subscribe<FsChange>(FS_CHANNEL, cb),
   onAutomation: (cb) => subscribe<AutomationRun>(AUTOMATION_CHANNEL, cb),
-  onPreview: (cb) => subscribe<PreviewInfo>(PREVIEW_CHANNEL, cb)
+  onPreview: (cb) => subscribe<PreviewInfo>(PREVIEW_CHANNEL, cb),
+  onApkProgress: (cb) => subscribe<ApkProgress>(APK_CHANNEL, cb),
+  pathForFile: (file) => webUtils.getPathForFile(file)
 }
 
 contextBridge.exposeInMainWorld('api', api)

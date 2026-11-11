@@ -157,6 +157,72 @@ export interface AtuStatus {
   toolsInstalled: boolean
 }
 
+// ------------------------------------------------------------------ XAPK to APK
+
+/** What a dropped bundle (.xapk/.apkm/.apks/.zip), folder of split apks or plain .apk contains. */
+export interface ApkBundleInfo {
+  path: string
+  fileName: string
+  kind: 'bundle' | 'folder' | 'apk'
+  sizeBytes: number
+  /** From the bundle's manifest.json; null when it has none. */
+  name: string | null
+  packageName: string | null
+  versionName: string | null
+  /** SDK level the app needs at least (31 = Android 12, 32 = Android 12L, 33 = Android 13). */
+  minSdk: number | null
+  targetSdk: number | null
+  /** The .apk files inside (base + config/asset splits). */
+  parts: string[]
+  /** OBB data files: an apk cannot hold them. */
+  obbFiles: string[]
+}
+
+export interface ApkToolsStatus {
+  /** The java.exe that will run the tools, or null when none was found. */
+  java: string | null
+  javaSource: 'dink_atu' | 'java_home' | 'path' | null
+  /** The two helper jars are downloaded once, the first time a conversion needs them. */
+  apkEditor: boolean
+  signer: boolean
+  downloadMegabytes: number
+}
+
+export interface ApkConvertInput {
+  path: string
+  /** Lower the app's minimum Android SDK to this level so older emulators accept it; null/absent = keep it. */
+  minSdk?: number | null
+}
+
+export interface ApkConvertResult {
+  outputPath: string
+  sizeBytes: number
+  /** How many .apk files were merged into the result. */
+  parts: number
+  minSdkBefore: number | null
+  minSdkAfter: number | null
+  warnings: string[]
+}
+
+export interface ApkInstallInput {
+  /** The converted .apk to put on the emulator. */
+  path: string
+  /** Its package name, used to confirm afterwards that Play is recorded as the installer. */
+  packageName?: string | null
+}
+
+export interface ApkInstallResult {
+  /** The adb device the app went to. */
+  serial: string
+  /** Who the system says installed it (com.android.vending when the Play record took), or null when it could not be read. */
+  installer: string | null
+}
+
+export interface ApkProgress {
+  step: 'tools' | 'extract' | 'merge' | 'patch' | 'sign' | 'install' | 'done'
+  message: string
+}
+
 export interface RecentEventsQuery {
   limit?: number
   projectId?: string
@@ -914,6 +980,17 @@ export interface IpcContract {
   'tools:atuBrowse': () => AtuStatus | null
   /** Forgets the picked folder (the automatic search is used again). */
   'tools:atuClear': () => AtuStatus
+  'apk:status': () => ApkToolsStatus
+  /** Opens a file dialog for a .xapk/.apkm/.apks/.apk. null = cancelled. */
+  'apk:pickFile': () => string | null
+  'apk:inspect': (path: string) => ApkBundleInfo
+  /** Merges the splits into one signed .apk next to the source file. Long: progress is pushed on APK_CHANNEL. */
+  'apk:convert': (input: ApkConvertInput) => ApkConvertResult
+  /** Stops the running conversion. false when none is running. */
+  'apk:cancel': () => boolean
+  'apk:install': (input: ApkInstallInput) => ApkInstallResult
+  /** Shows a converted .apk in Explorer. */
+  'apk:reveal': (path: string) => void
   'projects:inspectFolder': (path: string) => FolderInspection
   'projects:reveal': (id: string) => void
   'dashboard:stats': () => DashboardStats
@@ -1021,6 +1098,13 @@ export const IPC_CHANNELS: Record<IpcChannel, true> = {
   'tools:atuStatus': true,
   'tools:atuBrowse': true,
   'tools:atuClear': true,
+  'apk:status': true,
+  'apk:pickFile': true,
+  'apk:inspect': true,
+  'apk:convert': true,
+  'apk:cancel': true,
+  'apk:install': true,
+  'apk:reveal': true,
   'projects:inspectFolder': true,
   'projects:reveal': true,
   'dashboard:stats': true,
@@ -1039,6 +1123,8 @@ export const FS_CHANNEL = 'fs:changed'
 export const AUTOMATION_CHANNEL = 'automation:update'
 /** The live preview changed state, or a served file changed. */
 export const PREVIEW_CHANNEL = 'preview:update'
+/** A step of an XAPK to APK conversion started. */
+export const APK_CHANNEL = 'apk:progress'
 
 // ------------------------------------------------------------------ assets (Phase 7)
 
@@ -1259,4 +1345,7 @@ export interface StudioApi {
   onFsChange(cb: (change: FsChange) => void): () => void
   onAutomation(cb: (run: AutomationRun) => void): () => void
   onPreview(cb: (info: PreviewInfo) => void): () => void
+  onApkProgress(cb: (progress: ApkProgress) => void): () => void
+  /** The real disk path of a file dropped onto the window (the renderer cannot read `File.path` any more). */
+  pathForFile(file: File): string
 }

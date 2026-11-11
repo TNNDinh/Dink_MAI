@@ -25,6 +25,7 @@ import { TaskService } from '../src/main/services/tasks'
 import { Orchestrator } from '../src/main/orchestrator/orchestrator'
 import { MemorySecrets } from './helpers/memory-secrets'
 import { createHandlers } from '../src/main/ipc/handlers'
+import { ApkConverter } from '../src/main/apk/converter'
 import { WorkflowEngine } from '../src/main/workflows/engine'
 import { WorkflowService } from '../src/main/workflows/service'
 import { registerIpc, type IpcMainLike } from '../src/main/ipc/register'
@@ -330,10 +331,12 @@ describe('IPC registration', () => {
       automation: new AutomationService(events, workspace, commands),
       preview: new PreviewService(events, workspace),
       toolPaths: new ToolPaths(db),
+      apk: new ApkConverter({ toolsDir: join(dir, 'apk-tools'), atuDir: () => null, emit: () => undefined }),
       host: {
         emitChat: () => undefined,
         appInfo: () => ({ name: 't', version: '0', electron: '0', node: '0', platform: 'win32', userDataPath: '', defaultProjectsRoot: '', dbVersion: 1, encryptionAvailable: true }),
         pickFolder: async () => null,
+        pickFile: async () => null,
         revealInFolder: (p) => revealed.push(p)
       }
     })

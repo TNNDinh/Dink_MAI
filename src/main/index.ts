@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import { statSync } from 'node:fs'
 import { BrowserWindow, Menu, app, dialog, ipcMain, nativeImage, safeStorage, shell } from 'electron'
-import { ACTIVITY_CHANNEL, APPROVAL_CHANNEL, AUTOMATION_CHANNEL, CHAT_CHANNEL, FS_CHANNEL, PREVIEW_CHANNEL, TERMINAL_CHANNEL, type AppInfo, type ChatStreamEvent } from '../shared/ipc'
+import { ACTIVITY_CHANNEL, APK_CHANNEL, APPROVAL_CHANNEL, AUTOMATION_CHANNEL, CHAT_CHANNEL, FS_CHANNEL, PREVIEW_CHANNEL, TERMINAL_CHANNEL, type AppInfo, type ChatStreamEvent } from '../shared/ipc'
 import { AssetService } from './assets/service'
 import { bgraToRaster, setForeignDecoder } from './assets/codec'
 import { Database } from './db/database'
@@ -10,7 +10,8 @@ import { AutomationService } from './automation/service'
 import { AutoRecovery } from './git/recovery'
 import { GitService } from './git/service'
 import { PreviewService } from './preview/service'
-import { ToolPaths } from './services/tool-paths'
+import { ToolPaths, resolveAtuDir } from './services/tool-paths'
+import { ApkConverter } from './apk/converter'
 import { createHandlers } from './ipc/handlers'
 import { registerIpc, type IpcMainLike } from './ipc/register'
 import { EncryptedFileSecretStore, type Cipher } from './secrets/secret-store'
@@ -85,6 +86,13 @@ async function bootstrap(): Promise<void> {
   const automation = new AutomationService(events, workspace, commands)
   const preview = new PreviewService(events, workspace)
   const toolPaths = new ToolPaths(db)
+  const apk = new ApkConverter({
+    toolsDir: join(userData, 'tools', 'apk'),
+    atuDir: () => resolveAtuDir(toolPaths.configuredAtu())?.dir ?? null,
+    emit: (p) => {
+      for (const w of BrowserWindow.getAllWindows()) if (!w.isDestroyed()) w.webContents.send(APK_CHANNEL, p)
+    }
+  })
   const assets = new AssetService({ db, events, workspace, connections })
   // JPEG, WebP, GIF and interlaced PNG are decoded by Electron; PNG uses the built-in decoder.
   setForeignDecoder((data) => {
@@ -125,6 +133,12 @@ async function bootstrap(): Promise<void> {
       const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
       return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
     },
+    async pickFile(title: string, extensions: string[]): Promise<string | null> {
+      const win = mainWindow()
+      const opts = { title, properties: ['openFile'] as Array<'openFile'>, filters: [{ name: 'Android packages', extensions }, { name: 'All files', extensions: ['*'] }] }
+      const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+      return res.canceled || res.filePaths.length === 0 ? null : res.filePaths[0]
+    },
     revealInFolder(path: string): void {
       // A file is shown selected in its folder (opening it would launch another program); a folder is opened.
       try {
@@ -136,7 +150,7 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  registerIpc(ipcMain as unknown as IpcMainLike, createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, host }), {
+  registerIpc(ipcMain as unknown as IpcMainLike, createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, apk, host }), {
     isTrustedSender: isTrustedUrl,
     onError: (channel, error) =>
       events.record({ level: 'error', type: 'ipc.error', message: `${channel}: ${error instanceof Error ? error.message : String(error)}` })

@@ -77,6 +77,7 @@ Nút **STOP** dừng mọi lần gọi mô hình và tiến trình con đang ch�
 | Workflow Editor | Dựng quy trình dạng đồ thị (có bước phê duyệt của người) và chạy |
 | Asset Library | Ảnh/asset do AI tạo, kèm giá và lịch sử |
 | Task Manager | Bảng task, phụ thuộc giữa task, trạng thái, lỗi |
+| XAPK to APK | Kéo một file `.xapk` / `.apkm` / `.apks` (hoặc thư mục apk tách) vào, nhận lại 1 file `.apk` đã ký, lưu cạnh file gốc. Xem mục 6 |
 | Settings | Đường dẫn công cụ (ví dụ Dink_ATU), tùy chọn chung |
 
 ---
@@ -131,6 +132,16 @@ Clone https://github.com/TNNDinh/Dink_ATU rồi chạy `setup.ps1 -WithGhidra` m
 4. Bắt đầu run (ngân sách gợi ý $15-30, cho chạy 1 task một lúc). Planner tự chia: (1) Analyst chạy Dink_ATU và viết `docs/evidence/assets-and-data.md`; (2) Analyst viết `docs/evidence/code-map.md`; (3) Designer, chờ cả hai, viết `docs/GAME_DESIGN.md`. Kết quả của Dink_ATU nằm trong `atu_output/<tên>/`.
 5. Duyệt lệnh Dink_ATU khi được hỏi (lệnh `apk2unity.ps1` tham chiếu thư mục ngoài dự án nên cần phê duyệt), hoặc bật bypass cho dự án.
 
+### Đổi XAPK thành APK (trang "XAPK to APK")
+
+Không cần dự án hay agent: mở trang **XAPK to APK** trong thanh bên, kéo file `.xapk` vào (hoặc bấm *Choose file…*), rồi bấm **Convert to APK**. App gộp các phần (base + config) bằng APKEditor, căn chỉnh và ký bằng uber-apk-signer, rồi lưu `<tên>.apk` cạnh file gốc (không bao giờ ghi đè file có sẵn).
+
+- Cần Java: dùng JDK trong Dink_ATU (`tools/jdk`), nếu không có thì `JAVA_HOME` hoặc `java` trong PATH.
+- Lần đầu app tải hai file jar (khoảng 10 MB) vào thư mục dữ liệu của app, kiểm tra SHA-256 cố định rồi giữ lại cho các lần sau.
+- Tùy chọn **Lower the minimum Android version** (mặc định tắt): hạ `minSdkVersion` trong manifest, ví dụ game cần SDK 32 (Android 12L) nhưng BlueStacks chỉ Android 11 (SDK 30) sẽ báo `INSTALL_FAILED_OLDER_SDK`. Game vẫn có thể crash nếu dùng tính năng chỉ có ở Android mới.
+- File OBB đi kèm không thể nằm trong apk; app chỉ cảnh báo.
+- Apk đã ký bằng khóa debug, nên không cài đè được lên bản đã cài từ Play Store (gỡ bản cũ trước).
+
 ### Giữ cho tài liệu trung thực
 Agent có `apk_to_unity` hoặc `android_play` được dặn gắn mỗi khẳng định về game gốc bằng `[VERIFIED: nguồn]` (đọc từ code C# thật, từ `ui_dump`/`logcat`, hoặc từ file dữ liệu) hoặc `[INFERRED]` (suy ra từ tên, outline, pseudo-C), và ghi "unknown" thay vì bịa. Đây là chỉ dẫn cho mô hình, không phải khóa kỹ thuật: người đọc vẫn nên soi các chỗ không có tag và các con số không có nguồn.
 
@@ -174,6 +185,7 @@ Dữ liệu người dùng (SQLite `studio.db`, khóa mã hóa) nằm trong `%AP
 | "Dink_ATU is not installed / has no tools" | Cài Dink_ATU và chạy `setup.ps1 -WithGhidra`, hoặc chọn thư mục ở Settings → Tools |
 | "not a Unity project" | Thư mục thiếu `ProjectSettings/ProjectVersion.txt` |
 | "open in a Unity editor already" | Đóng editor hoặc dùng `unity_bridge`; chỉ xóa `Temp/UnityLockfile` khi chắc không có Unity nào đang chạy |
+| `INSTALL_FAILED_OLDER_SDK` khi cài xapk | Game cần Android mới hơn emulator; dùng trang XAPK to APK với tùy chọn hạ minimum Android, hoặc tạo instance BlueStacks Android 13 |
 | adb "no devices" | Mở BlueStacks, bật Android Debug Bridge, chạy `android_play connect` |
 | Nhà cung cấp trả lỗi lạ | Dùng Test connection và xem lỗi đã được chuẩn hóa (`auth`, `rate_limit`, `timeout`...) |
 | `npm run dev` báo `app` undefined | Biến `ELECTRON_RUN_AS_NODE` đang bật; chạy bằng `npm run dev` (script đã tự bỏ biến này) |

@@ -17,6 +17,7 @@ import { Settings } from './pages/Settings'
 import { SourceControl } from './pages/SourceControl'
 import { Preview } from './pages/Preview'
 import { Office } from './pages/Office'
+import { ApkTool } from './pages/ApkTool'
 import { ApprovalDialog } from './components/ApprovalDialog'
 import { useWatchWorkspaceFolder } from './lib/use-workspace-project'
 
@@ -42,6 +43,7 @@ function PageHost() {
   if (page === 'connections') return <Connections />
   if (page === 'tasks') return <Tasks />
   if (page === 'assets') return <Assets />
+  if (page === 'apk') return <ApkTool />
   if (page === 'settings') return <Settings />
   return (
     <Suspense fallback={<p className="p-6 text-xs text-faint">Loading the workflow editor…</p>}>
