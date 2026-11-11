@@ -1,6 +1,10 @@
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, statSync, readdirSync, mkdirSync, rmSync } from 'node:fs'
+import { join, extname, basename } from 'node:path'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { MAX_TIMEOUT_MS } from '../workspace/commands'
+
+const execFileAsync = promisify(execFile)
 import type { AgentTool, ToolContext } from './tools'
 import { describeShot, prepareScreenshot } from './screenshot'
 import { compactUiDump } from './ui-dump'
@@ -26,11 +30,62 @@ export function findAdb(env: NodeJS.ProcessEnv = process.env, exists: (p: string
   return env.ANDROID_ADB && exists(env.ANDROID_ADB) ? env.ANDROID_ADB : 'adb'
 }
 
+/** Windows ships bsdtar as tar.exe (System32); it extracts .zip/.xapk bundles, no extra dependency. */
+export function findTar(env: NodeJS.ProcessEnv = process.env): string {
+  return join(env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe')
+}
+
+/** APKPure / split-APK bundle extensions — all plain zip archives of several .apk parts. */
+const ARCHIVE_EXT = new Set(['.xapk', '.apkm', '.apks', '.zip'])
+
+/** Every .apk under a folder (recursively). Base first so install-multiple never sees only config/asset packs up front. */
+function listApks(dir: string): string[] {
+  const out: string[] = []
+  for (const e of readdirSync(dir, { withFileTypes: true })) {
+    const p = join(dir, e.name)
+    if (e.isDirectory()) out.push(...listApks(p))
+    else if (extname(e.name).toLowerCase() === '.apk') out.push(p)
+  }
+  // A config/asset split carries no launcher; keep those after the base apk (adb accepts any order, but this is clearer in logs).
+  const isSplit = (f: string): boolean => /(^|[._-])config[._]|Pack\.apk$|^split[._-]/i.test(basename(f))
+  return out.sort((a, b) => Number(isSplit(a)) - Number(isSplit(b)) || a.localeCompare(b))
+}
+
+/**
+ * The .apk files to hand `install` for one target: a single .apk as-is, a folder of split apks, or a .xapk/.apkm/.apks/.zip
+ * bundle extracted into `extractDir` first. Several parts → the caller uses install-multiple so the app installs complete and
+ * never has to reach Google Play for a missing pack.
+ */
+export async function resolveInstallApks(
+  targetFull: string,
+  extractDir: string,
+  deps: { tar?: string; run?: typeof execFileAsync } = {}
+): Promise<string[]> {
+  const run = deps.run ?? execFileAsync
+  const st = statSync(targetFull)
+  if (st.isDirectory()) {
+    const apks = listApks(targetFull)
+    if (!apks.length) throw new Error(`No .apk files were found in ${basename(targetFull)}.`)
+    return apks
+  }
+  const ext = extname(targetFull).toLowerCase()
+  if (ext === '.apk') return [targetFull]
+  if (!ARCHIVE_EXT.has(ext)) throw new Error(`Cannot install ${basename(targetFull)}: expected a .apk, a .xapk/.apkm bundle, or a folder of split apks.`)
+  rmSync(extractDir, { recursive: true, force: true })
+  mkdirSync(extractDir, { recursive: true })
+  await run(deps.tar ?? findTar(), ['-xf', targetFull, '-C', extractDir])
+  const apks = listApks(extractDir)
+  if (!apks.length) throw new Error(`No .apk files were found inside ${basename(targetFull)}.`)
+  return apks
+}
+
 export interface AndroidRequest {
   adb: string
   serial: string
   action: AndroidAction
   apk?: string
+  /** For install: every .apk to push. One → `install`; several (split APKs / a .xapk bundle) → `install-multiple`. */
+  files?: string[]
   package?: string
   x?: number
   y?: number
@@ -64,9 +119,18 @@ export function buildAndroidCommand(r: AndroidRequest): string {
   switch (r.action) {
     case 'connect':
       return `${adb} connect ${r.serial}`
-    case 'install':
-      if (!r.file) throw new Error('apk is required.')
-      return `${dev} install -r ${quote(r.file)}`
+    case 'install': {
+      const apks = r.files && r.files.length ? r.files : r.file ? [r.file] : []
+      if (!apks.length) throw new Error('apk is required.')
+      const quoted = apks.map(quote).join(' ')
+      // Two things make a delisted game usable on the emulator, both set here at install time:
+      // 1) install-multiple for a split app (base + config/asset packs, e.g. an APKPure .xapk) — the base alone launches and
+      //    tries to fetch its missing packs from Play, the "get this app on Google Play" dead end for a game that is gone.
+      // 2) -i com.android.vending records Play as the installer, so the game's own "was I installed from Play?" check passes
+      //    instead of bouncing the user to the (now empty) Play listing.
+      const opts = '-r -i com.android.vending'
+      return apks.length === 1 ? `${dev} install ${opts} ${quoted}` : `${dev} install-multiple ${opts} ${quoted}`
+    }
     case 'packages':
       return `${dev} shell pm list packages -3`
     case 'launch':
@@ -99,12 +163,12 @@ const androidPlay: AgentTool = {
   def: {
     name: 'android_play',
     description:
-      'Play an Android game on the BlueStacks emulator (through adb) to learn how it really works when its code could not be recovered fully: install an APK, launch it, read the screen as text (ui_dump lists texts, buttons and their bounds; games drawn with OpenGL show little, so also use screenshot), tap, swipe, press keys, and read warnings from logcat. Work step by step: connect, install, packages (find the package name), launch, then repeat ui_dump / tap. Note what you see and write it into the documentation (write_memory or a doc file). Screenshots are saved to atu_output/screens/ for people to review. BlueStacks must be running with ADB enabled (Settings > Advanced). ONLY use games the user owns or has the right to analyse.',
+      'Play an Android game on the BlueStacks emulator (through adb) to learn how it really works when its code could not be recovered fully: install an APK, launch it, read the screen as text (ui_dump lists texts, buttons and their bounds; games drawn with OpenGL show little, so also use screenshot), tap, swipe, press keys, and read warnings from logcat. For install, apk may be a single .apk, an APKPure .xapk / .apkm bundle, or a folder of split apks — every part is installed together (install-multiple), which a split game needs or it launches and asks to be fetched from Google Play (a dead end for a delisted game). Work step by step: connect, install, packages (find the package name), launch, then repeat ui_dump / tap. Note what you see and write it into the documentation (write_memory or a doc file). Screenshots are saved to atu_output/screens/ for people to review. BlueStacks must be running with ADB enabled (Settings > Advanced). ONLY use games the user owns or has the right to analyse.',
     parameters: {
       type: 'object',
       properties: {
         action: { type: 'string', enum: [...ACTIONS] },
-        apk: { type: 'string', description: 'For install: path of the .apk relative to the project root.' },
+        apk: { type: 'string', description: 'For install: path (relative to the project root) of a .apk, a .xapk/.apkm bundle, or a folder of split apks. All parts are installed together.' },
         package: { type: 'string', description: 'For launch/stop: the package name, e.g. com.company.game.' },
         x: { type: 'integer' },
         y: { type: 'integer' },
@@ -126,12 +190,15 @@ const androidPlay: AgentTool = {
     if (!ACTIONS.includes(action)) throw new Error(`action must be one of: ${ACTIONS.join(', ')}.`)
     const sandbox = ctx.workspace.sandbox(ctx.projectId)
     let file: string | undefined
+    let files: string[] | undefined
     let shot: string | undefined
     if (action === 'install') {
       if (typeof args.apk !== 'string' || !args.apk.trim()) throw new Error('apk is required.')
       const p = sandbox.resolve(args.apk.trim())
       if (!existsSync(p.full)) throw new Error(`${p.rel} does not exist in the project.`)
-      file = p.full
+      const safe = args.apk.trim().replace(/[^A-Za-z0-9._-]/g, '_').slice(-60)
+      const extractDir = sandbox.resolve(`atu_output/.install/${safe}`).full
+      files = await resolveInstallApks(p.full, extractDir)
     }
     if (action === 'screenshot') {
       const name = typeof args.name === 'string' && /^[A-Za-z0-9_-]{1,60}$/.test(args.name) ? args.name : `shot-${Date.now().toString(36)}`
@@ -146,6 +213,7 @@ const androidPlay: AgentTool = {
       serial,
       action,
       file,
+      files,
       package: typeof args.package === 'string' ? args.package : undefined,
       x: args.x as number,
       y: args.y as number,
@@ -162,7 +230,7 @@ const androidPlay: AgentTool = {
     const note = (level: 'info' | 'warn', message: string, data?: Record<string, unknown>): void => {
       ctx.events.record({ projectId: ctx.projectId, runId: ctx.runId, agentId: ctx.agent.id, level, type: 'android.action', message: `${ctx.agent.name}: ${message}`, data: { action, ...data } })
     }
-    if (action === 'install') note('info', `${what} (can take a while)`)
+    if (action === 'install') note('info', `${what}${files && files.length > 1 ? ` — ${files.length} split parts together` : ''} (can take a while)`)
     const r = await ctx.commands.run({
       projectId: ctx.projectId,
       projectName: project.name,
