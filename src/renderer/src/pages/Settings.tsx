@@ -1,6 +1,6 @@
-import { FolderOpen, Lock, ShieldAlert } from 'lucide-react'
+import { Copy, FolderOpen, Lock, ShieldAlert } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
-import type { AtuStatus, CommandPolicyInfo } from '../../../shared/ipc'
+import type { AtuStatus, CommandPolicyInfo, McpStatus } from '../../../shared/ipc'
 import { useStudio } from '../store'
 import { Badge, Button, Card, CardHeader, PageHeader } from '../components/ui'
 
@@ -73,6 +73,77 @@ function AtuTool() {
   )
 }
 
+/** Lets an AI client such as Claude Code operate the Studio through local MCP tools, instead of controlling the screen. */
+function McpAccess() {
+  const [status, setStatus] = useState<McpStatus | null>(null)
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    void window.api.invoke('mcp:status').then(setStatus, () => undefined)
+  }, [])
+  const run = async (channel: 'mcp:setEnabled' | 'mcp:rotateToken', arg?: boolean) => {
+    setBusy(true)
+    setError('')
+    try {
+      setStatus(channel === 'mcp:setEnabled' ? await window.api.invoke(channel, arg === true) : await window.api.invoke(channel))
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+  const copy = async () => {
+    if (!status?.registerCommand) return
+    try {
+      await navigator.clipboard.writeText(status.registerCommand)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {
+      setError('Could not copy. Select the command and copy it by hand.')
+    }
+  }
+  return (
+    <Card>
+      <CardHeader
+        title="AI access (MCP)"
+        action={
+          status && (
+            <Button size="sm" variant={status.enabled ? 'ghost' : undefined} disabled={busy} onClick={() => void run('mcp:setEnabled', !status.enabled)}>
+              {status.enabled ? 'Turn off' : 'Turn on'}
+            </Button>
+          )
+        }
+      />
+      <dl>
+        <Row label="What it does">Lets Claude Code or another MCP client use this app directly: read and create projects, tasks and runs, read and edit project files, and operate the window with real clicks. It cannot approve commands or change approval settings for you.</Row>
+        <Row label="Status">
+          {!status ? 'Checking…' : status.running ? <span className="text-ok">On, {status.url}</span> : status.enabled ? <span className="text-err">Could not start</span> : 'Off'}
+        </Row>
+        {status?.running && <Row label="Tools">{status.toolCount} (see the list with your client, or call app_channels for every app function)</Row>}
+        {status?.running && status.registerCommand && (
+          <Row label="Connect Claude Code">
+            <div className="flex flex-col items-end gap-2">
+              <code className="rounded bg-black/30 px-2 py-1 text-left font-mono text-[11px]">{status.registerCommand}</code>
+              <div className="flex gap-2">
+                <Button size="sm" variant="ghost" disabled={busy} onClick={() => void run('mcp:rotateToken')}>
+                  New token
+                </Button>
+                <Button size="sm" onClick={() => void copy()}>
+                  <Copy size={13} /> {copied ? 'Copied' : 'Copy'}
+                </Button>
+              </div>
+            </div>
+          </Row>
+        )}
+        <Row label="Safety">Only programs on this PC can connect, and only with the token above. Anyone who has the token can use everything this page lists, so treat it like a password; “New token” cuts off every client that has the old one.</Row>
+        {status?.error && <Row label="Problem"><span className="text-err">{status.error}</span></Row>}
+        {error && <Row label="Error"><span className="text-err">{error}</span></Row>}
+      </dl>
+    </Card>
+  )
+}
+
 /** Mostly read-only: shows the facts that matter for trust, plus where external tools live. */
 export function Settings() {
   const info = useStudio((s) => s.info)
@@ -139,6 +210,8 @@ export function Settings() {
           </div>
         )}
       </Card>
+
+      <McpAccess />
 
       <AtuTool />
 

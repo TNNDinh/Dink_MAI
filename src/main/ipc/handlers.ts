@@ -14,6 +14,7 @@ import type { TaskService } from '../services/tasks'
 import { describePolicy } from '../security/command-policy'
 import type { ToolPaths } from '../services/tool-paths'
 import type { ApkConverter } from '../apk/converter'
+import type { McpService } from '../mcp/service'
 import { existsSync, statSync } from 'node:fs'
 import { extname } from 'node:path'
 import type { CommandService } from '../workspace/commands'
@@ -52,6 +53,8 @@ export interface HandlerDeps {
   preview: PreviewService
   toolPaths: ToolPaths
   apk: ApkConverter
+  /** Optional so tests that never touch MCP need not build one. */
+  mcp?: McpService
   host: HostBridge
 }
 
@@ -59,7 +62,12 @@ export type Handlers = {
   [K in IpcChannel]: (...args: Parameters<IpcContract[K]>) => ReturnType<IpcContract[K]> | Promise<ReturnType<IpcContract[K]>>
 }
 
-export function createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, apk, host }: HandlerDeps): Handlers {
+function needMcp(mcp: McpService | undefined): McpService {
+  if (!mcp) throw new Error('The MCP server is not available in this build.')
+  return mcp
+}
+
+export function createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, apk, mcp, host }: HandlerDeps): Handlers {
   return {
     'automation:detect': (projectId) => automation.detect(String(projectId)),
     'automation:run': (input) => automation.start(String(input?.projectId), input?.kind),
@@ -203,6 +211,9 @@ export function createHandlers({ projects, dashboard, events, connections, chat,
     },
     'projects:remove': (id) => projects.remove(String(id)),
     'projects:pickFolder': () => host.pickFolder(),
+    'mcp:status': () => needMcp(mcp).status(),
+    'mcp:setEnabled': (on) => needMcp(mcp).setEnabled(on === true),
+    'mcp:rotateToken': () => needMcp(mcp).rotateToken(),
     'tools:atuStatus': () => toolPaths.atuStatus(),
     'tools:atuBrowse': async () => {
       const picked = await host.pickFolder('Choose the Dink_ATU folder (the one that contains apk2unity.ps1)')

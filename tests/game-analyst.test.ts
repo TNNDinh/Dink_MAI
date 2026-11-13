@@ -20,6 +20,14 @@ describe('the Game Analyst of the Dink_ATU department', () => {
     expect(new Set(AGENT_TEMPLATES.map((x) => x.key)).size).toBe(AGENT_TEMPLATES.length)
   })
 
+  it('identifies the engine first and does not run the Unity converter on a Godot package', () => {
+    const p = getTemplate('game_analyst')!.systemPrompt
+    expect(p).toMatch(/FIRST FIND OUT WHICH ENGINE/)
+    expect(p).toMatch(/libgodot_android\.so/)
+    expect(p).toMatch(/do not run "convert" or decompile_logic/)
+    expect(p).toMatch(/REBUILD THE GAME IN UNITY/)
+  })
+
   it('is offered the package tools; the designer is offered the web tools and not the package tools', () => {
     const analyst = toolsFor(asAgent('game_analyst'), { workspace: true }).map((x) => x.def.name)
     expect(analyst).toEqual(expect.arrayContaining(['apk_to_unity', 'search_large_file', 'android_play']))

@@ -157,6 +157,18 @@ Giới hạn cần biết: game IL2CPP chỉ cho outline lớp (`il2cpp/dump.cs`
 
 Skill là một thư mục có `SKILL.md` (cùng định dạng với Claude Code). Agent có quyền đọc file có thể liệt kê (`list_skills`), nạp (`use_skill`) và đọc file trong skill (`read_skill_file`). Thư mục skill lấy từ biến `DINH_MAI_SKILLS_DIR` (nhiều thư mục ngăn bằng `;`) hoặc mặc định `~/.claude/skills`. Xem [docs/SKILLS.md](docs/SKILLS.md).
 
+### Cho AI điều khiển app (MCP)
+
+Thay vì dùng MCP "desktop" (AI nhìn màn hình rồi bấm chuột), app có sẵn một MCP server nội bộ để Claude Code (hoặc client MCP khác) gọi thẳng vào app.
+
+1. Vào **Settings → AI access (MCP) → Turn on**.
+2. Bấm **Copy** ở dòng "Connect Claude Code" rồi dán vào terminal (lệnh dạng `claude mcp add --transport http studio http://127.0.0.1:47615/mcp --header "Authorization: Bearer …"`). Chỉ cần làm một lần; token được lưu mã hóa và giữ nguyên giữa các lần mở app.
+3. App phải đang chạy thì AI mới gọi được.
+
+Các tool: `projects_list`, `tasks_*`, `run_start/stop/resume`, `files_*`, `file_write`, `git_*`, `automation_*`, `events_recent`, `agents_list`; `app_call` gọi bất kỳ hàm nào còn lại của app (xem `IpcContract` trong `src/shared/ipc.ts`, `app_channels` liệt kê tên); `ui_snapshot` / `ui_click` / `ui_type` / `ui_key` / `ui_screenshot` / `ui_eval` thao tác cửa sổ app bằng sự kiện chuột/phím thật, không cần cửa sổ nằm trên cùng.
+
+An toàn: chỉ lắng nghe `127.0.0.1`, bắt buộc có token, từ chối request từ trình duyệt (Origin) và Host lạ. AI **không** thể trả lời hộp phê duyệt lệnh, chạy lệnh terminal của người dùng, mở hộp thoại chọn thư mục, bật "bypass approvals" hay đọc/đổi token. **New token** vô hiệu hóa mọi client đang dùng token cũ.
+
 ---
 
 ## 8. Biến môi trường thường dùng
@@ -169,6 +181,7 @@ Skill là một thư mục có `SKILL.md` (cùng định dạng với Claude Cod
 | `BLUESTACKS_DIR`, `BLUESTACKS_ADB_PORT`, `BLUESTACKS_ADB_SERIAL` | Cấu hình BlueStacks/adb |
 | `DINH_MAI_SKILLS_DIR` | Thư mục skills |
 | `MADS_USER_DATA` | Dùng thư mục dữ liệu riêng (test, tránh đụng profile thật) |
+| `MADS_MCP=1`, `MADS_MCP_PORT`, `MADS_MCP_TOKEN` | Ép bật MCP server, đổi cổng (mặc định 47615), đặt token cố định (chỉ dùng cho chạy tự động/test) |
 
 Dữ liệu người dùng (SQLite `studio.db`, khóa mã hóa) nằm trong `%APPDATA%\Multi-AI Development Studio`.
 

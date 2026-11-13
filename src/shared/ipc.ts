@@ -143,6 +143,23 @@ export interface AppInfo {
   encryptionAvailable: boolean
 }
 
+/** The in-app MCP server that lets an AI client (Claude Code, ...) operate the Studio directly. */
+export interface McpStatus {
+  /** The switch in Settings. */
+  enabled: boolean
+  running: boolean
+  port: number | null
+  /** http://127.0.0.1:<port>/mcp while running. */
+  url: string | null
+  /** The bearer token clients must send. Only ever shown in Settings. */
+  token: string
+  toolCount: number
+  /** A ready-to-paste `claude mcp add ...` line while running. */
+  registerCommand: string | null
+  /** Why it could not start (for example every nearby port is busy). */
+  error: string | null
+}
+
 /** Where the Dink_ATU tool (APK to Unity) is installed, as the app sees it. */
 export interface AtuStatus {
   /** The folder that will be used, or null when none was found. */
@@ -975,6 +992,11 @@ export interface IpcContract {
   /** Unregisters the project from the studio. Never deletes files on disk. */
   'projects:remove': (id: string) => void
   'projects:pickFolder': () => string | null
+  'mcp:status': () => McpStatus
+  /** Starts or stops the MCP server and remembers the choice. */
+  'mcp:setEnabled': (enabled: boolean) => McpStatus
+  /** Makes a new token; clients registered with the old one stop working. */
+  'mcp:rotateToken': () => McpStatus
   'tools:atuStatus': () => AtuStatus
   /** Opens a folder dialog for the Dink_ATU folder. Saves it when it holds apk2unity.ps1, throws otherwise. null = cancelled. */
   'tools:atuBrowse': () => AtuStatus | null
@@ -1095,6 +1117,9 @@ export const IPC_CHANNELS: Record<IpcChannel, true> = {
   'projects:update': true,
   'projects:remove': true,
   'projects:pickFolder': true,
+  'mcp:status': true,
+  'mcp:setEnabled': true,
+  'mcp:rotateToken': true,
   'tools:atuStatus': true,
   'tools:atuBrowse': true,
   'tools:atuClear': true,

@@ -13,6 +13,8 @@ import { PreviewService } from './preview/service'
 import { ToolPaths, resolveAtuDir } from './services/tool-paths'
 import { ApkConverter } from './apk/converter'
 import { createHandlers } from './ipc/handlers'
+import { electronUi } from './mcp/electron-ui'
+import { McpService } from './mcp/service'
 import { registerIpc, type IpcMainLike } from './ipc/register'
 import { EncryptedFileSecretStore, type Cipher } from './secrets/secret-store'
 import { AgentService } from './services/agents'
@@ -111,6 +113,14 @@ async function bootstrap(): Promise<void> {
   workflowEngine.recover()
 
   const mainWindow = () => BrowserWindow.getAllWindows()[0]
+  // Lets an AI client (Claude Code, ...) operate the Studio over local MCP. Off until switched on in Settings; MADS_MCP=1 forces it on.
+  const mcp = new McpService(db, secrets, {
+    version: app.getVersion(),
+    ui: () => electronUi(mainWindow),
+    port: process.env.MADS_MCP_PORT ? Number(process.env.MADS_MCP_PORT) : undefined,
+    forceEnabled: process.env.MADS_MCP === '1',
+    token: process.env.MADS_MCP_TOKEN || undefined
+  })
 
   const host = {
     appInfo: (): AppInfo => ({
@@ -150,7 +160,9 @@ async function bootstrap(): Promise<void> {
     }
   }
 
-  registerIpc(ipcMain as unknown as IpcMainLike, createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, apk, host }), {
+  const handlers = createHandlers({ projects, dashboard, events, connections, chat, agents, tasks, orchestrator, workspace, commands, assets, workflows, workflowEngine, git, automation, preview, toolPaths, apk, mcp, host })
+  mcp.attach(handlers)
+  registerIpc(ipcMain as unknown as IpcMainLike, handlers, {
     isTrustedSender: isTrustedUrl,
     onError: (channel, error) =>
       events.record({ level: 'error', type: 'ipc.error', message: `${channel}: ${error instanceof Error ? error.message : String(error)}` })
@@ -184,11 +196,13 @@ async function bootstrap(): Promise<void> {
   }
 
   const win = createWindow()
+  await mcp.init()
   if (smokeDir) {
     void runSmokeTest({ win, outDir: smokeDir, secretStoreFactory: (file) => new EncryptedFileSecretStore(file, cipher) })
   }
 
   app.on('before-quit', () => {
+    void mcp.stop()
     chat.cancelAll()
     commands.killAll()
     workspace.stopWatching()
